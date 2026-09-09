@@ -1,0 +1,19 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+crash.log
+
+# Secrets / keys
+*.pem
+*.key
+.vault_pass
+vault_pass.txt
+
+# Ansible
+*.retry
+
+# OS junk
+.DS_Store
+Thumbs.db
