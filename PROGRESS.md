@@ -22,7 +22,7 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 ## Current Phase
 
-**Phase 1 — Terraform Foundation: NOT YET STARTED**
+**Phase 1 — Terraform Foundation: IN PROGRESS (repo setup complete, Terraform files not yet started)**
 
 Planning and architecture decisions are approved. No AWS infrastructure has been provisioned yet.
 
@@ -105,9 +105,14 @@ The connection method must fit the approved AWS architecture and must not introd
 
 ## Completed Work
 
-*No implementation work completed yet.*
+- GitHub repository `iac-terraform-ansible` created via `gh repo create` (private).
+- `gh` CLI installed and authenticated (`winpty gh auth login` required — MinTTY has no PTY support).
+- Repository cloned and located at `G:\Tutorial Folder\DevOpsTutorials\DevOps Project\iac-terraform-ansible`.
+- Directory structure created: `terraform/`, `ansible/`, `docs/`.
+- `.gitignore` written (Terraform state/vars, secrets/keys, Ansible retry files, OS junk — `.terraform.lock.hcl` intentionally NOT ignored).
+- Initial commit `d4f4a03` pushed to `origin/master` — verified via `git log --oneline` and GitHub.
 
-Phase 1 begins with repository setup and Terraform networking.
+Terraform networking files not yet started.
 
 ## Implementation Phases
 
@@ -193,46 +198,28 @@ Phase 1 has not started.
 
 ## Repository Status
 
-- [ ] GitHub repository `iac-terraform-ansible` created.
-- [ ] Local repository initialized.
-- [ ] Directory structure created (`terraform/`, `ansible/`, `docs/`).
-- [ ] `.gitignore` configured.
+- [x] GitHub repository `iac-terraform-ansible` created.
+- [x] Local repository initialized.
+- [x] Directory structure created (`terraform/`, `ansible/`, `docs/`).
+- [x] `.gitignore` configured.
 - [ ] Terraform provider/version constraints defined.
 - [ ] `.terraform.lock.hcl` generated/committed when appropriate.
-- [ ] Initial commit pushed.
+- [x] Initial commit pushed.
 
 ## Next Step
 
 ### Phase 1 — Terraform Foundation
 
-**IN PROGRESS — paused mid-step, resume here:**
+**Resume here:** repo scaffolding is complete and pushed. Next up:
 
-Currently setting up tooling before repo creation. Decided to use GitHub CLI (`gh`)
-instead of the web UI for repo creation (more realistic DevOps habit, reusable in
-later CI/CD-heavy projects).
-
-- `winget` is not available on this machine (confirmed via PowerShell — command not found).
-- Installing `gh` via direct MSI download from https://github.com/cli/cli/releases/latest instead.
-- Machine architecture confirmed: **AMD64** (via `echo $env:PROCESSOR_ARCHITECTURE` in PowerShell).
-- First download attempt grabbed the wrong asset (`gh_2.100.0_windows_arm64.msi`) — install failed
-  with "installation package is not supported by this processor type."
-- **Resume point:** download `gh_2.100.0_windows_amd64.msi` (correct arch) from the same releases
-  page, install it, close and reopen Git Bash completely (PATH won't update in an already-open
-  window), then verify with `gh --version`, then run `gh auth login`.
-
-Once `gh` is working, original Phase 1 steps resume unchanged:
-
-1. Create GitHub repository `iac-terraform-ansible` (via `gh repo create`).
-2. Clone into the DevOps workspace on **G:** (`G:\Tutorial Folder\DevOpsTutorials\DevOps Project\`, alongside `aws-lift-and-shift`).
-3. Initialize repository structure (`terraform/`, `ansible/`, `docs/`).
-4. Configure `.gitignore`.
-5. Write Terraform networking files:
+1. Terraform basics walkthrough (provider block, version pinning, plan/apply model) — first hands-on Terraform in this project.
+2. Write Terraform networking files:
    - `main.tf`
    - `variables.tf`
    - `outputs.tf`
    - `security_groups.tf`
    - `iam.tf`
-6. Run `terraform fmt`, `terraform validate`, and `terraform plan`.
+3. Run `terraform fmt`, `terraform validate`, and `terraform plan`.
 
 **No `terraform apply` until the initial plan has been reviewed.**
 
