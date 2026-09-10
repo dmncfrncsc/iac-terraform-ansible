@@ -32,3 +32,16 @@ location first.
 *This project:* ran `gh repo create ... --clone` from `~`, so it cloned into
 `~/iac-terraform-ansible` instead of the intended `G:\...\DevOps Project\`, requiring
 a manual move afterward.
+
+## Session 2 — 2026-09-10 — Terraform Version Verification
+
+**Chocolatey installs/upgrades need an elevated shell** — Chocolatey installs packages
+under `C:\ProgramData\...`, a system-owned folder. A non-admin terminal can run `choco`
+but can't write there, so upgrades fail with `UnauthorizedAccessException: Access ... is
+denied` after retrying each file 2-3 times, even after confirming "Y" to proceed.
+
+*This project:* `choco upgrade terraform -y` from a normal Git Bash window failed on
+every file under `chocolatey\lib\terraform\`. Re-running the identical command from
+Git Bash opened via "Run as administrator" succeeded — Terraform went from v1.15.7 to
+v1.16.1. Same root cause as `winpty` and package-manager admin requirements: Windows
+permission boundaries, not a tool bug.

@@ -75,6 +75,7 @@ Implementation alone is not completion. Verification evidence is recorded before
 - Review and explicitly approve destructive changes before `terraform destroy`.
 - Pin Terraform provider versions and commit `.terraform.lock.hcl` when appropriate.
 - Record the Terraform version used by the project.
+- Terraform version verified via `terraform -version`: **v1.16.1** (upgraded from v1.15.7, installed via Chocolatey).
 
 ### Terraform / Ansible Boundary
 
@@ -229,7 +230,7 @@ Phase 1 has not started.
 - AWS CLI configured for IAM user `gitops-terraform`.
 - AWS Region: `us-east-1`.
 - AWS Account: `747336059892`.
-- Terraform installed locally.
+- Terraform installed locally — **verified**, v1.16.1 (see Key Decisions).
 - Ansible installed locally.
 - Git Bash is the primary shell environment.
 
