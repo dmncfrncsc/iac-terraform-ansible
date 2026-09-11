@@ -45,3 +45,35 @@ every file under `chocolatey\lib\terraform\`. Re-running the identical command f
 Git Bash opened via "Run as administrator" succeeded — Terraform went from v1.15.7 to
 v1.16.1. Same root cause as `winpty` and package-manager admin requirements: Windows
 permission boundaries, not a tool bug.
+
+## Session 3 — 2026-09-10 — Requirements-to-Architecture Reasoning
+
+**Architecture isn't invented from taste — it's derived by matching plain-English
+requirements to a small set of trigger words**, then asking two follow-up questions
+per component: *who needs to reach it, from where* (→ public vs. private placement),
+and *on what specific ports/protocols even among things allowed to talk* (→ security
+group rules).
+
+**Trigger-word lookup table** (the actual mechanism, not intuition):
+
+| Phrase in requirements | Component it implies |
+|---|---|
+| store / save / permanent / record / history | database |
+| real-time / instantly / live update | push/messaging system |
+| email / SMS / notification / receipt | separate notification service |
+| browse / search / view a list of | read-facing API/backend |
+| upload a photo / file / video | file/object storage |
+| pay / checkout / charge a card | payment component |
+| log in / sign up / account | authentication/user management |
+| any device/app talking to "the system" | an API/backend it connects to |
+
+*This project:* not yet applied to a real in-project decision — practiced so far only
+on hypothetical apps (blog, food-delivery). Next real application should be an actual
+Project 2 decision (e.g., Ansible connectivity method) reasoned out *before* being
+told the answer, not after.
+
+**Working agreement going forward:** for real architecture/design decisions in this
+project (not hypotheticals), the requirement/constraint gets presented first and I
+attempt to name the matching trigger word + component before the answer is confirmed,
+instead of always receiving the fully-reasoned answer directly.
+
