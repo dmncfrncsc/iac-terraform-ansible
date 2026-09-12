@@ -1,0 +1,81 @@
+# VPC — reproduces the network from Project 1 (aws-lift-and-shift)
+resource "aws_vpc" "main" {
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "vprofile-vpc"
+  }
+}
+
+# Internet Gateway — allows public subnets to route traffic to/from the internet
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "vprofile-igw"
+  }
+}
+
+# Public subnet — AZ 1a
+resource "aws_subnet" "public_1a" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.public_subnet_1a_cidr
+  availability_zone       = var.az_1a
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "vprofile-public-1a"
+  }
+}
+
+# Public subnet — AZ 1b
+resource "aws_subnet" "public_1b" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.public_subnet_1b_cidr
+  availability_zone       = var.az_1b
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "vprofile-public-1b"
+  }
+}
+
+# Private subnet — AZ 1a (no public IP assignment, no internet route)
+resource "aws_subnet" "private_1a" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.private_subnet_1a_cidr
+  availability_zone       = var.az_1a
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name = "vprofile-private-1a"
+  }
+}
+
+# Public route table — default route to the Internet Gateway is what makes
+# subnets associated with this table "public"
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = {
+    Name = "vprofile-public-rt"
+  }
+}
+
+# Associate both public subnets with the public route table
+resource "aws_route_table_association" "public_1a" {
+  subnet_id      = aws_subnet.public_1a.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "public_1b" {
+  subnet_id      = aws_subnet.public_1b.id
+  route_table_id = aws_route_table.public.id
+}
