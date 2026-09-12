@@ -110,6 +110,32 @@ resource "aws_security_group" "mc" {
   }
 }
 
+# Message queue tier — RabbitMQ, accepts traffic only from the app tier
+resource "aws_security_group" "rmq" {
+  name        = "vprofile-rmq-sg"
+  description = "Allow RabbitMQ traffic only from the app tier"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "RabbitMQ from app tier"
+    from_port       = 5672
+    to_port         = 5672
+    protocol        = "tcp"
+    security_groups = [aws_security_group.app.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "vprofile-rmq-sg"
+  }
+}
+
 # SSM VPC endpoints — accepts HTTPS from instances needing Session Manager access
 resource "aws_security_group" "ssm_ep" {
   name        = "vprofile-ssm-ep-sg"
@@ -130,6 +156,22 @@ resource "aws_security_group" "ssm_ep" {
     to_port         = 443
     protocol        = "tcp"
     security_groups = [aws_security_group.db.id]
+  }
+
+  ingress {
+    description     = "HTTPS from mc tier"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.mc.id]
+  }
+
+  ingress {
+    description     = "HTTPS from rmq tier"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.rmq.id]
   }
 
   egress {

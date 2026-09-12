@@ -187,3 +187,32 @@ None of it costs money (no instances, no NAT, no EIPs, no Interface endpoints), 
 meant "development finished and documented," not "infrastructure destroyed." Worth keeping these
 as separate concepts going forward — a project can be a complete portfolio deliverable while its
 infrastructure is either torn down or deliberately left standing as evidence.
+
+## Session 7 — 2026-09-12 — Missing RabbitMQ Security Group
+
+**Root cause of a missing SG, traced to a stale source-of-truth doc, not a Terraform mistake**
+— Project 2's Phase 1 security groups were built directly from the master prompt's "Existing
+AWS Project State" list, which only ever named 5 of Project 1's SGs (alb, app, db, mc, ssm_ep).
+RabbitMQ's SG was never in that list, so Project 2 never reproduced it — even though the
+architecture always called for four backend services (MariaDB, Memcached, RabbitMQ, Tomcat).
+
+*This project:* confirmed via `describe-security-groups` scoped to Project 2's VPC that only
+6 SGs existed (5 named + `default`) — no `rmq-sg`. Cross-checked Project 1's actual VPC and
+found 11 SGs total, including `vprofile-rmq-sg` (`sg-0ba3baa7a8a231777`), closing out the
+Known Issue flagged in Session 6.
+
+**A missing resource can hide behind a passing verification** — Phase 1 was marked COMPLETE
+and its `terraform apply` output ("17 to add, 0 to change, 0 to destroy") matched the plan
+exactly, so the apply itself gave no signal anything was wrong. The gap only surfaced because
+the *architecture* (4 backend services) was checked against the *security groups actually
+created* (only 3 backend SGs: db, mc — app is not backend), not because Terraform reported
+an error.
+
+**Fix applied:** added `aws_security_group.rmq` (ingress 5672 from `app`, same one-rule
+pattern as `db`/`mc`), plus two new ingress rules inside the existing `ssm_ep` resource —
+one for `rmq`, and one for `mc`, which was also found missing from `ssm_ep` during this same
+review despite `mc`'s own SG existing correctly since Phase 1.
+
+*This project:* `terraform plan` showed `1 to add, 1 to change, 0 to destroy` exactly as
+predicted; `apply` succeeded; live AWS confirmed `vprofile-rmq-sg` (`sg-0b8768c70645d442c`)
+with the correct 5672-from-app-sg rule.

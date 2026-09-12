@@ -150,6 +150,7 @@ The connection method must fit the approved AWS architecture and must not introd
 - `vprofile-db-sg` — `sg-0939ef1bb0fa7d572`
 - `vprofile-mc-sg` — `sg-0a83f618b4a023ee5`
 - `vprofile-ssm-ep-sg` — `sg-095cb993f3dfc8a34`
+- `vprofile-rmq-sg` — `sg-0b8768c70645d442c`
 
 ### IAM Roles / Instance Profiles
 
@@ -170,7 +171,7 @@ Reused from Project 1; no new secrets planned.
 
 - Documentation miscount: this file previously stated Phase 1 would produce 13 resources; itemized breakdown actually sums to 17, matching `terraform plan`/`apply` output exactly. No config issue — corrected here.
 - Cross-project naming collision: Project 1 (`aws-lift-and-shift`) and Project 2 reuse identical `Name` tags (e.g. `vprofile-app-sg`). An un-scoped tag-only AWS CLI query returned Project 1's SG instead of Project 2's. Fix: always scope security-group/resource lookups by VPC ID, not tag name alone, in this project.
-- Project 1's documented "Existing AWS Project State" (master prompt) undercounts its security groups — live AWS shows 9 SGs in `vpc-0e686e7841a60b687`, not the 5 listed (4 undocumented: `vprofile-rmq-builder-sg`, `vprofile-ami-builder-sg`, `vprofile-secretsmgr-ep-sg`, `vprofile-rmq-sg`, `vprofile-ec2api-ep-sg`). Does not affect Project 2; flagged for awareness, not yet resolved.
+- **Resolved 2026-09-12:** Project 1's documented "Existing AWS Project State" (master prompt) undercounted its security groups. Live AWS confirms 11 SGs in `vpc-0e686e7841a60b687` (not 9, not the 5 originally listed): `vprofile-alb-sg`, `vprofile-app-sg`, `vprofile-db-sg`, `vprofile-mc-sg`, `vprofile-ssm-ep-sg`, `vprofile-rmq-sg` (`sg-0ba3baa7a8a231777`), `vprofile-rmq-builder-sg`, `vprofile-ami-builder-sg`, `vprofile-secretsmgr-ep-sg`, `vprofile-ec2api-ep-sg`, `default`. Since `rmq-sg` was never in the master prompt's list, Project 2 never reproduced it. Fixed by adding `vprofile-rmq-sg` (`sg-0b8768c70645d442c`) to Project 2 directly, plus the corresponding `ssm_ep` ingress rule and a matching `mc`-tier `ssm_ep` rule that was also found missing during this fix (see NOTES.md Session 7).
 - Unidentified VPC `vpc-0a0efac60df5e3724` found in the account (contains `docker-sg`, `sonar-sg`, no running instances). Origin unconfirmed as of this session. Not part of Project 1 or Project 2 scope. No cost impact (no instances, no NAT, no EIPs, no Interface endpoints found anywhere in the account during this session's cost audit).
 
 ## Definition of Done
