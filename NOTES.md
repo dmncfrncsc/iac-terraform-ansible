@@ -216,3 +216,23 @@ review despite `mc`'s own SG existing correctly since Phase 1.
 *This project:* `terraform plan` showed `1 to add, 1 to change, 0 to destroy` exactly as
 predicted; `apply` succeeded; live AWS confirmed `vprofile-rmq-sg` (`sg-0b8768c70645d442c`)
 with the correct 5672-from-app-sg rule.
+
+## Session 8 — 2026-09-12 — EC2 Provisioning, AMI Drift, and AWS Free Tier Changes
+
+**AMI data sources avoid hardcoding a fragile, expiring ID** — `data "aws_ami" { most_recent = true }` looks up the newest matching AMI at plan/apply time instead of a fixed ID that could later be deregistered by AWS.
+
+*This project:* `data.aws_ami.amazon_linux_2023` filters on `al2023-ami-*-x86_64`, `owners = ["amazon"]`.
+
+**AMI drift can silently propose destroying a running instance** — because the data source re-resolves on every `plan`, an unrelated future `plan` (weeks later, for something else entirely) can find AWS has published a newer patch AMI and propose `-/+ replace` on an instance that hasn't actually changed — since AWS instances force replacement on AMI changes, not an in-place update.
+
+**`lifecycle { ignore_changes = [ami] }`** — "let it float, then pin implicitly"** — the AMI data source still resolves freely on every plan (the "float"), but the *moment* `terraform apply` first creates the instance, that specific resolved AMI ID becomes a permanent fact about the running instance and gets recorded in state (the "pin") — automatically, without ever typing a literal AMI ID into the file. `ignore_changes = [ami]` tells Terraform not to propose fixing a future mismatch between the (now newer) data source result and the (frozen) state value.
+
+*This project:* applied to all four Phase 2 instances (`app`, `db`, `mc`, `rmq`) — each resolved Amazon Linux 2023 independently at apply time, each permanently pinned to whatever ID it got.
+
+**AWS Free Tier structurally changed on July 15, 2025** — accounts created before that date keep the legacy model (12 months of free EC2/RDS/etc. hours + Always Free services, no account expiration). Accounts created on/after that date get a $200 credit balance instead (split $100 signup + $100 onboarding), with the account itself auto-closing after 6 months or when credits run out, whichever comes first — followed by a 90-day grace period.
+
+*This project:* confirmed via the Billing console that this account is on the credit-based model — $147.53 remaining of $200 as of this session. Changes the cost framing going forward: `t3.micro` isn't "free hours," it's cheap dollars drawn from a balance with a hard 6-month clock, not just a usage cap.
+
+**Cost Anomaly Detection → root cause drill-down** — AWS's Billing dashboard flags spending that deviates from the account's historical pattern and can attribute it to a specific usage type, not just a service name — useful for distinguishing "VPC costs money" (misleading; VPCs themselves are free) from what's actually inside it generating the charge.
+
+*This project:* a flagged $5.13 "Amazon Virtual Private Cloud" anomaly (Sept 2–8) resolved via root-cause drill-down to `USE1-VpcEndpoint-Hours` — an Interface VPC Endpoint, confirmed (via `describe-vpc-endpoints` showing only the one free Gateway endpoint currently exists) to be a historical, already-deleted cost from Project 1's SSM endpoints, not a live leak.

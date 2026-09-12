@@ -24,7 +24,9 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **Phase 1 — Terraform Foundation: COMPLETE (infrastructure provisioned and verified 2026-09-12)**
 
-Planning and architecture decisions are approved. All 17 resources provisioned via `terraform apply` and spot-verified against live AWS state (VPC, subnet, security group). Phase 2 (EC2 instances) not yet started.
+**Phase 2 & 3 — Terraform EC2 Infrastructure, Apply & Verification: COMPLETE (2026-09-12)**
+
+Originally planned as two separate phases (define resources, then apply/verify), but completed together in one continuous session — writing the 4 EC2 instance resources, running `terraform apply` (4 added, 0 changed, 0 destroyed), and verifying against live AWS state all happened without a gap between them, same as how Phase 1 was actually executed. Merged here to reflect actual project history rather than forcing an artificial split. Phase 4 (Ansible roles) requires resolving the Ansible connectivity decision (documented as open in Key Decisions) before role-writing begins.
 
 ## Project Baseline
 
@@ -161,7 +163,12 @@ The connection method must fit the approved AWS architecture and must not introd
 
 ### EC2 Instances
 
-*To be populated during Phase 2.*
+- App tier (Tomcat): `i-0a6248eb09d2aee24` (`t3.micro`, `172.20.3.137`, private subnet)
+- DB tier (MariaDB): `i-01ea507a995c1bcd1` (`t3.micro`, `172.20.3.71`, private subnet)
+- Cache tier (Memcached): `i-08901fbfca2706776` (`t3.micro`, `172.20.3.167`, private subnet)
+- MQ tier (RabbitMQ): `i-06971293f76aaf5e2` (`t3.micro`, `172.20.3.224`, private subnet)
+
+AMI: Amazon Linux 2023 (resolved dynamically via `data.aws_ami`, pinned per-instance via `lifecycle.ignore_changes` to prevent unplanned replacement on future AMI updates).
 
 ### Secrets
 
@@ -227,13 +234,9 @@ Reused from Project 1; no new secrets planned.
 
 ## Next Step
 
-### Phase 2 — Terraform EC2 Infrastructure
+### Phase 4 — Ansible Roles
 
-Phase 1 complete and verified. Next: define EC2 instances for MariaDB, Memcached, RabbitMQ, and Tomcat in Terraform (no userdata for service installation — Ansible handles configuration post-boot per the Terraform/Ansible ownership boundary).
-
-Before writing EC2 resources: confirm AMI selection and instance sizing/type per service, and confirm instance placement (public vs private subnet) per service against the approved architecture.
-
-No `terraform apply` for Phase 2 until plan is reviewed and approved, same as Phase 1.
+Phase 2 & 3 complete and verified. Before writing Ansible roles: resolve the open Ansible Connectivity decision (see Key Decisions) — instances are private with no public IP or SSH access, so connectivity must go through the existing SSM infrastructure (SSM VPC endpoints + `ssm_ep` security group, both already provisioned) or an equivalent method that doesn't introduce public exposure.
 
 ## Assumptions
 
