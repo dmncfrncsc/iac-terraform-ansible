@@ -22,9 +22,9 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 ## Current Phase
 
-**Phase 1 — Terraform Foundation: IN PROGRESS (repo setup complete, Terraform files not yet started)**
+**Phase 1 — Terraform Foundation: COMPLETE (infrastructure provisioned and verified 2026-09-12)**
 
-Planning and architecture decisions are approved. No AWS infrastructure has been provisioned yet.
+Planning and architecture decisions are approved. All 17 resources provisioned via `terraform apply` and spot-verified against live AWS state (VPC, subnet, security group). Phase 2 (EC2 instances) not yet started.
 
 ## Project Baseline
 
@@ -77,6 +77,7 @@ Implementation alone is not completion. Verification evidence is recorded before
 - Record the Terraform version used by the project.
 - Terraform version verified via `terraform -version`: **v1.16.1** (upgraded from v1.15.7, installed via Chocolatey).
 - AWS provider pinned to `~> 5.31.0` in `terraform/versions.tf`; verified via `terraform init` (initially mis-pinned as `~> 5.31`, which pulled v5.100.0 — corrected to three-segment constraint, re-verified at v5.31.0).
+- AWS provider pinned to `~> 5.31.0` in `terraform/versions.tf`; verified via `terraform init` (initially mis-pinned as `~> 5.31`, which pulled v5.100.0 — corrected to three-segment constraint, re-verified at v5.31.0).
 
 ### Terraform / Ansible Boundary
 
@@ -114,7 +115,11 @@ The connection method must fit the approved AWS architecture and must not introd
 - `.gitignore` written (Terraform state/vars, secrets/keys, Ansible retry files, OS junk — `.terraform.lock.hcl` intentionally NOT ignored).
 - Initial commit `d4f4a03` pushed to `origin/master` — verified via `git log --oneline` and GitHub.
 
-`terraform/versions.tf` and `.terraform.lock.hcl` written, verified, committed (`1b3e3e2`). All Phase 1 files now written and validated: `main.tf` (VPC, IGW, 3 subnets, public route table), `variables.tf` (6 variables for CIDRs/AZs), `outputs.tf` (4 outputs: vpc_id + 3 subnet IDs), `security_groups.tf` (5 SGs reproducing Project 1's boundaries: alb, app, db, mc, ssm_ep), `iam.tf` (EC2 role, least-privilege Secrets Manager policy scoped to 2 secrets, SSM managed policy, instance profile). All validated via `terraform validate` and `terraform fmt -check`. `terraform plan` not yet run — no AWS resources exist.
+`terraform/versions.tf` and `.terraform.lock.hcl` written, verified, committed (`1b3e3e2`). Remaining networking files (`main.tf`, `variables.tf`, `outputs.tf`, `security_groups.tf`, `iam.tf`) not yet started.
+
+- `terraform plan` run from `terraform/` (first attempt failed from repo root — no config files found there). Output: 17 to add, 0 to change, 0 to destroy — matches approved architecture exactly.
+- `terraform apply` executed and completed successfully: 17 added, 0 changed, 0 destroyed.
+- Live AWS state spot-verified against Terraform output: VPC (`vpc-0b7f81bc3fae90299`), public subnet 1a (`subnet-0b2832c32f46fe494`), and `vprofile-app-sg` (`sg-0936af3af55dc2f2b`, ingress correctly scoped to ALB security group as source, not CIDR) all confirmed matching.
 
 ## Implementation Phases
 
@@ -133,15 +138,25 @@ The connection method must fit the approved AWS architecture and must not introd
 
 ### Networking
 
-*To be populated during Phase 1.*
+- VPC: `vpc-0b7f81bc3fae90299` (`172.20.0.0/16`)
+- Public subnet 1a: `subnet-0b2832c32f46fe494` (`172.20.1.0/24`, us-east-1a)
+- Public subnet 1b: `subnet-01551ca8aef1df0b4` (`172.20.2.0/24`, us-east-1b)
+- Private subnet 1a: `subnet-09325f3c8dd077c24` (`172.20.3.0/24`, us-east-1a)
 
 ### Security Groups
 
-*To be populated during Phase 1.*
+- `vprofile-alb-sg` — `sg-04f2f2d83159f5e1c`
+- `vprofile-app-sg` — `sg-0936af3af55dc2f2b`
+- `vprofile-db-sg` — `sg-0939ef1bb0fa7d572`
+- `vprofile-mc-sg` — `sg-0a83f618b4a023ee5`
+- `vprofile-ssm-ep-sg` — `sg-095cb993f3dfc8a34`
 
 ### IAM Roles / Instance Profiles
 
-*To be populated during Phase 1.*
+- Role: `vprofile-ec2-role`
+- Instance profile: `vprofile-ec2-instance-profile`
+- Inline policy: `vprofile-secrets-access` (scoped to 2 Secrets Manager ARNs)
+- Attached managed policy: `AmazonSSMManagedInstanceCore`
 
 ### EC2 Instances
 
@@ -153,20 +168,21 @@ Reused from Project 1; no new secrets planned.
 
 ## Known Issues
 
-None.
-
-Phase 1 has not started.
+- Documentation miscount: this file previously stated Phase 1 would produce 13 resources; itemized breakdown actually sums to 17, matching `terraform plan`/`apply` output exactly. No config issue — corrected here.
+- Cross-project naming collision: Project 1 (`aws-lift-and-shift`) and Project 2 reuse identical `Name` tags (e.g. `vprofile-app-sg`). An un-scoped tag-only AWS CLI query returned Project 1's SG instead of Project 2's. Fix: always scope security-group/resource lookups by VPC ID, not tag name alone, in this project.
+- Project 1's documented "Existing AWS Project State" (master prompt) undercounts its security groups — live AWS shows 9 SGs in `vpc-0e686e7841a60b687`, not the 5 listed (4 undocumented: `vprofile-rmq-builder-sg`, `vprofile-ami-builder-sg`, `vprofile-secretsmgr-ep-sg`, `vprofile-rmq-sg`, `vprofile-ec2api-ep-sg`). Does not affect Project 2; flagged for awareness, not yet resolved.
+- Unidentified VPC `vpc-0a0efac60df5e3724` found in the account (contains `docker-sg`, `sonar-sg`, no running instances). Origin unconfirmed as of this session. Not part of Project 1 or Project 2 scope. No cost impact (no instances, no NAT, no EIPs, no Interface endpoints found anywhere in the account during this session's cost audit).
 
 ## Definition of Done
 
 ### Terraform
 
-- [ ] Terraform files written.
-- [ ] `terraform fmt` produces clean formatting.
-- [ ] `terraform validate` succeeds.
-- [ ] `terraform plan` reviewed with expected resources only.
-- [ ] `terraform apply` provisions infrastructure successfully.
-- [ ] AWS infrastructure matches Terraform state.
+- [x] Terraform files written.
+- [x] `terraform fmt` produces clean formatting.
+- [x] `terraform validate` succeeds.
+- [x] `terraform plan` reviewed with expected resources only.
+- [x] `terraform apply` provisions infrastructure successfully.
+- [x] AWS infrastructure matches Terraform state.
 
 ### Ansible
 
@@ -210,15 +226,13 @@ Phase 1 has not started.
 
 ## Next Step
 
-### Phase 1 — Terraform Foundation
+### Phase 2 — Terraform EC2 Infrastructure
 
-**Resume here:** repo scaffolding is complete and pushed. Next up:
+Phase 1 complete and verified. Next: define EC2 instances for MariaDB, Memcached, RabbitMQ, and Tomcat in Terraform (no userdata for service installation — Ansible handles configuration post-boot per the Terraform/Ansible ownership boundary).
 
-Phase 1 file-writing is complete. Next:
-1. Run `terraform plan` and review the full proposed resource list against expectations (13 resources: 1 VPC, 1 IGW, 3 subnets, 1 route table, 2 route table associations, 5 security groups, 1 IAM role, 1 IAM role policy, 1 IAM policy attachment, 1 instance profile).
-2. No `terraform apply` until plan is reviewed and approved.
+Before writing EC2 resources: confirm AMI selection and instance sizing/type per service, and confirm instance placement (public vs private subnet) per service against the approved architecture.
 
-**No `terraform apply` until the initial plan has been reviewed.**
+No `terraform apply` for Phase 2 until plan is reviewed and approved, same as Phase 1.
 
 ## Assumptions
 

@@ -146,74 +146,44 @@ doing the requirements-to-architecture reasoning (see Session 3).
 *This project:* Project 2 is the "spec already decided" case — the architecture was
 fixed in Project 1, so Phase 1 work here is translation into Terraform syntax, not new
 architecture reasoning. Later projects (3+) hand over more undecided territory.
-## Session 5 — 2026-09-11 — Security Groups, IAM, and Terraform File-Writing Patterns
 
-**Resource block syntax: `resource "<type>" "<local name>"`** — the first string is fixed
-by the AWS provider (can't be invented); the second is a name you choose purely for
-referencing the resource elsewhere in the same project. AWS never sees the local name.
+## Session 6 — 2026-09-12 — Terraform Apply, Verification, and Cross-Project State
 
-*This project:* `aws_subnet` used three times (`public_1a`, `public_1b`, `private_1a`) —
-same type, distinct local names since there are three. `aws_vpc.main.id` reads as
-type → local name → attribute.
+**Terraform only reads `.tf` files in the current directory** — it does not recurse into
+subfolders. Running `terraform plan` from the repo root (instead of `terraform/`) produces
+`Error: No configuration files`, not a warning — an easy mistake when the repo root and the
+Terraform working directory are different places.
 
-**Nested blocks** — some resources group related settings into their own `{ }` block
-inside the resource, instead of flat `key = value` pairs.
+**Tag-based AWS CLI filters aren't project-scoped** — `--filters "Name=tag:Name,Values=X"`
+matches by tag value across the *entire account/region*, not just the project you're thinking
+about. If two projects reuse the same `Name` tag convention (as Project 1 and Project 2 both do,
+by design, to reproduce the same architecture), an un-scoped query can silently return the wrong
+project's resource with a valid-looking response — no error to catch it.
 
-*This project:* `route { cidr_block = "0.0.0.0/0" gateway_id = ... }` inside
-`aws_route_table.public` — a destination → target pair. This exact rule (`0.0.0.0/0` →
-Internet Gateway) is what makes a route table, and any subnet associated with it, "public." No separate route table entry needed for the private subnet — it silently
-falls back to the VPC's implicit main route table, which has no internet route.
+*This project:* querying `vprofile-app-sg` by tag alone returned Project 1's SG
+(`sg-0eef3641caa12a1ba`, VPC `vpc-0e686e7841a60b687`) instead of Project 2's
+(`sg-0936af3af55dc2f2b`, VPC `vpc-0b7f81bc3fae90299`). Fixed by adding a second filter,
+`Name=vpc-id,Values=<vpc>`, to every subsequent lookup.
 
-**Variables/outputs extraction heuristic** — not everything needs to become a variable
-or output; extracting one adds indirection that should buy something real.
+**Verification sampling, not exhaustive checking** — after `terraform apply`, you don't need to
+individually verify all N resources against live AWS state by hand. Spot-checking a
+representative few (one from each resource category — here: the VPC, a subnet, and a security
+group) is enough to confirm Terraform's plan matched reality, since a systematic bug would show
+up in any of them.
 
-*This project:* CIDR blocks and AZs → variables (would differ in a hypothetical second
-environment). Ports (`3306`, `8080`, `11211`) and `0.0.0.0/0` → left hardcoded (protocol
-constants, not configuration — same value in every environment). For outputs: extract
-only if a *separate tool* (Ansible) or a human debugging needs the value directly — not
-just because another Terraform resource in the same project references it (same-project
-resources can already see each other without an output).
+**Interface VPC Endpoints vs. Gateway VPC Endpoints** — Interface endpoints (e.g. SSM, SSM
+Messages, EC2 Messages) bill hourly per-AZ regardless of usage. Gateway endpoints (S3, DynamoDB)
+are free. Same "VPC Endpoint" resource type in the console, very different cost profile — worth
+checking which kind before treating "there's a VPC endpoint here" as a cost concern.
 
-**Security group egress is NOT automatic in Terraform** — the AWS Console defaults a new
-SG to allow all outbound traffic. Terraform doesn't inherit that default: no `egress`
-block means zero outbound traffic allowed, since Terraform manages the complete rule set
-for the resource. Common gotcha.
+*This project:* Project 1's leftover S3 Gateway endpoint (`vpce-0540d3b05281c8189`) costs
+nothing; its three Interface endpoints (SSM/SSM Messages/EC2 Messages) had already been deleted
+before this session, which is why the earlier cost audit found no billable leftovers at all in
+Project 1's VPC.
 
-*This project:* every one of the five SGs (`alb`, `app`, `db`, `mc`, `ssm_ep`) has an
-explicit `egress { protocol = "-1", cidr_blocks = ["0.0.0.0/0"] }` block to match
-Project 1's actual (Console-default) behavior.
-
-**Security group as a source, not just an IP range** — an ingress rule's source can be
-`security_groups = [aws_security_group.x.id]` instead of `cidr_blocks`. Scopes access to
-"anything with this SG attached," which survives IP changes and is far more precise than
-a subnet-wide CIDR allow.
-
-*This project (hub-and-spoke pattern):* the app tier is the hub — `db-sg` and `mc-sg`
-both allow inbound only from `app-sg` (not from each other; MariaDB and Memcached never
-talk to each other directly). `app-sg` allows inbound only from `alb-sg`. `alb-sg` is the
-one deliberate exception, open to `0.0.0.0/0` on 80/443, since it's the public entry point.
-
-**IAM role vs. policy vs. instance profile — three distinct pieces** — a *role* is an
-identity assumable by a service; a *policy* is the permissions document attached to a
-role; an *instance profile* is the wrapper that actually attaches a role to an EC2
-instance (EC2 can't hold a role directly). The Console auto-creates the profile when you
-create an EC2 role, which hides this distinction — Terraform requires writing both.
-
-*This project:* `aws_iam_role.ec2_role` (trust policy: only `ec2.amazonaws.com` can
-assume it) → `aws_iam_role_policy.secrets_access` (least-privilege: `GetSecretValue` scoped
-to exactly `vprofile/db/admin-password` and `vprofile/rmq/test-password`, not all
-secrets) + `aws_iam_role_policy_attachment` for the AWS-managed
-`AmazonSSMManagedInstanceCore` policy → `aws_iam_instance_profile.ec2_profile` wraps the
-role for actual EC2 attachment.
-
-**`jsonencode({...})`** — writes IAM policy documents (which AWS requires as JSON) using
-HCL syntax instead of a raw JSON string; Terraform converts it. Less error-prone than
-hand-written JSON strings embedded in `.tf` files.
-
-**Secrets Manager ARN wildcard suffix (`-*`)** — every secret's real ARN has a random
-6-character suffix AWS appends automatically. The policy resource ARN needs a trailing
-`-*` to match it without hardcoding the random part, while still scoping to exactly the
-named secret (not a broader wildcard like `vprofile/*`).
-
-*This project:* `arn:aws:secretsmanager:us-east-1:747336059892:secret:vprofile/db/admin-password-*`
-
+**"Closed" project ≠ "torn down" project** — Project 1's `PROGRESS.md`/master-prompt status says
+CLOSED, but its VPC, subnets, route table, IGW, and several security groups still exist in AWS.
+None of it costs money (no instances, no NAT, no EIPs, no Interface endpoints), so "closed" here
+meant "development finished and documented," not "infrastructure destroyed." Worth keeping these
+as separate concepts going forward — a project can be a complete portfolio deliverable while its
+infrastructure is either torn down or deliberately left standing as evidence.
