@@ -146,3 +146,74 @@ doing the requirements-to-architecture reasoning (see Session 3).
 *This project:* Project 2 is the "spec already decided" case — the architecture was
 fixed in Project 1, so Phase 1 work here is translation into Terraform syntax, not new
 architecture reasoning. Later projects (3+) hand over more undecided territory.
+## Session 5 — 2026-09-11 — Security Groups, IAM, and Terraform File-Writing Patterns
+
+**Resource block syntax: `resource "<type>" "<local name>"`** — the first string is fixed
+by the AWS provider (can't be invented); the second is a name you choose purely for
+referencing the resource elsewhere in the same project. AWS never sees the local name.
+
+*This project:* `aws_subnet` used three times (`public_1a`, `public_1b`, `private_1a`) —
+same type, distinct local names since there are three. `aws_vpc.main.id` reads as
+type → local name → attribute.
+
+**Nested blocks** — some resources group related settings into their own `{ }` block
+inside the resource, instead of flat `key = value` pairs.
+
+*This project:* `route { cidr_block = "0.0.0.0/0" gateway_id = ... }` inside
+`aws_route_table.public` — a destination → target pair. This exact rule (`0.0.0.0/0` →
+Internet Gateway) is what makes a route table, and any subnet associated with it, "public." No separate route table entry needed for the private subnet — it silently
+falls back to the VPC's implicit main route table, which has no internet route.
+
+**Variables/outputs extraction heuristic** — not everything needs to become a variable
+or output; extracting one adds indirection that should buy something real.
+
+*This project:* CIDR blocks and AZs → variables (would differ in a hypothetical second
+environment). Ports (`3306`, `8080`, `11211`) and `0.0.0.0/0` → left hardcoded (protocol
+constants, not configuration — same value in every environment). For outputs: extract
+only if a *separate tool* (Ansible) or a human debugging needs the value directly — not
+just because another Terraform resource in the same project references it (same-project
+resources can already see each other without an output).
+
+**Security group egress is NOT automatic in Terraform** — the AWS Console defaults a new
+SG to allow all outbound traffic. Terraform doesn't inherit that default: no `egress`
+block means zero outbound traffic allowed, since Terraform manages the complete rule set
+for the resource. Common gotcha.
+
+*This project:* every one of the five SGs (`alb`, `app`, `db`, `mc`, `ssm_ep`) has an
+explicit `egress { protocol = "-1", cidr_blocks = ["0.0.0.0/0"] }` block to match
+Project 1's actual (Console-default) behavior.
+
+**Security group as a source, not just an IP range** — an ingress rule's source can be
+`security_groups = [aws_security_group.x.id]` instead of `cidr_blocks`. Scopes access to
+"anything with this SG attached," which survives IP changes and is far more precise than
+a subnet-wide CIDR allow.
+
+*This project (hub-and-spoke pattern):* the app tier is the hub — `db-sg` and `mc-sg`
+both allow inbound only from `app-sg` (not from each other; MariaDB and Memcached never
+talk to each other directly). `app-sg` allows inbound only from `alb-sg`. `alb-sg` is the
+one deliberate exception, open to `0.0.0.0/0` on 80/443, since it's the public entry point.
+
+**IAM role vs. policy vs. instance profile — three distinct pieces** — a *role* is an
+identity assumable by a service; a *policy* is the permissions document attached to a
+role; an *instance profile* is the wrapper that actually attaches a role to an EC2
+instance (EC2 can't hold a role directly). The Console auto-creates the profile when you
+create an EC2 role, which hides this distinction — Terraform requires writing both.
+
+*This project:* `aws_iam_role.ec2_role` (trust policy: only `ec2.amazonaws.com` can
+assume it) → `aws_iam_role_policy.secrets_access` (least-privilege: `GetSecretValue` scoped
+to exactly `vprofile/db/admin-password` and `vprofile/rmq/test-password`, not all
+secrets) + `aws_iam_role_policy_attachment` for the AWS-managed
+`AmazonSSMManagedInstanceCore` policy → `aws_iam_instance_profile.ec2_profile` wraps the
+role for actual EC2 attachment.
+
+**`jsonencode({...})`** — writes IAM policy documents (which AWS requires as JSON) using
+HCL syntax instead of a raw JSON string; Terraform converts it. Less error-prone than
+hand-written JSON strings embedded in `.tf` files.
+
+**Secrets Manager ARN wildcard suffix (`-*`)** — every secret's real ARN has a random
+6-character suffix AWS appends automatically. The policy resource ARN needs a trailing
+`-*` to match it without hardcoding the random part, while still scoping to exactly the
+named secret (not a broader wildcard like `vprofile/*`).
+
+*This project:* `arn:aws:secretsmanager:us-east-1:747336059892:secret:vprofile/db/admin-password-*`
+

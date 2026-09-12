@@ -114,7 +114,7 @@ The connection method must fit the approved AWS architecture and must not introd
 - `.gitignore` written (Terraform state/vars, secrets/keys, Ansible retry files, OS junk — `.terraform.lock.hcl` intentionally NOT ignored).
 - Initial commit `d4f4a03` pushed to `origin/master` — verified via `git log --oneline` and GitHub.
 
-`terraform/versions.tf` and `.terraform.lock.hcl` written, verified, committed (`1b3e3e2`). Remaining networking files (`main.tf`, `variables.tf`, `outputs.tf`, `security_groups.tf`, `iam.tf`) not yet started.
+`terraform/versions.tf` and `.terraform.lock.hcl` written, verified, committed (`1b3e3e2`). All Phase 1 files now written and validated: `main.tf` (VPC, IGW, 3 subnets, public route table), `variables.tf` (6 variables for CIDRs/AZs), `outputs.tf` (4 outputs: vpc_id + 3 subnet IDs), `security_groups.tf` (5 SGs reproducing Project 1's boundaries: alb, app, db, mc, ssm_ep), `iam.tf` (EC2 role, least-privilege Secrets Manager policy scoped to 2 secrets, SSM managed policy, instance profile). All validated via `terraform validate` and `terraform fmt -check`. `terraform plan` not yet run — no AWS resources exist.
 
 ## Implementation Phases
 
@@ -214,15 +214,9 @@ Phase 1 has not started.
 
 **Resume here:** repo scaffolding is complete and pushed. Next up:
 
-1. ~~Terraform basics walkthrough~~ — done: declarative model, resource blocks as description not instruction, state file, `plan` as three-way diff, idempotency.
-2. ~~`versions.tf` written and verified~~ (`terraform init` succeeds, AWS provider pinned at v5.31.0, lock file committed).
-3. Write remaining Terraform networking files:
-   - `main.tf`
-   - `variables.tf`
-   - `outputs.tf`
-   - `security_groups.tf`
-   - `iam.tf`
-4. Run `terraform fmt`, `terraform validate`, and `terraform plan`.
+Phase 1 file-writing is complete. Next:
+1. Run `terraform plan` and review the full proposed resource list against expectations (13 resources: 1 VPC, 1 IGW, 3 subnets, 1 route table, 2 route table associations, 5 security groups, 1 IAM role, 1 IAM role policy, 1 IAM policy attachment, 1 instance profile).
+2. No `terraform apply` until plan is reviewed and approved.
 
 **No `terraform apply` until the initial plan has been reviewed.**
 
