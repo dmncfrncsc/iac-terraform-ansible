@@ -76,6 +76,7 @@ Implementation alone is not completion. Verification evidence is recorded before
 - Pin Terraform provider versions and commit `.terraform.lock.hcl` when appropriate.
 - Record the Terraform version used by the project.
 - Terraform version verified via `terraform -version`: **v1.16.1** (upgraded from v1.15.7, installed via Chocolatey).
+- AWS provider pinned to `~> 5.31.0` in `terraform/versions.tf`; verified via `terraform init` (initially mis-pinned as `~> 5.31`, which pulled v5.100.0 — corrected to three-segment constraint, re-verified at v5.31.0).
 
 ### Terraform / Ansible Boundary
 
@@ -113,7 +114,7 @@ The connection method must fit the approved AWS architecture and must not introd
 - `.gitignore` written (Terraform state/vars, secrets/keys, Ansible retry files, OS junk — `.terraform.lock.hcl` intentionally NOT ignored).
 - Initial commit `d4f4a03` pushed to `origin/master` — verified via `git log --oneline` and GitHub.
 
-Terraform networking files not yet started.
+`terraform/versions.tf` and `.terraform.lock.hcl` written, verified, committed (`1b3e3e2`). Remaining networking files (`main.tf`, `variables.tf`, `outputs.tf`, `security_groups.tf`, `iam.tf`) not yet started.
 
 ## Implementation Phases
 
@@ -203,8 +204,8 @@ Phase 1 has not started.
 - [x] Local repository initialized.
 - [x] Directory structure created (`terraform/`, `ansible/`, `docs/`).
 - [x] `.gitignore` configured.
-- [ ] Terraform provider/version constraints defined.
-- [ ] `.terraform.lock.hcl` generated/committed when appropriate.
+- [x] Terraform provider/version constraints defined.
+- [x] `.terraform.lock.hcl` generated/committed.
 - [x] Initial commit pushed.
 
 ## Next Step
@@ -213,14 +214,15 @@ Phase 1 has not started.
 
 **Resume here:** repo scaffolding is complete and pushed. Next up:
 
-1. Terraform basics walkthrough (provider block, version pinning, plan/apply model) — first hands-on Terraform in this project.
-2. Write Terraform networking files:
+1. ~~Terraform basics walkthrough~~ — done: declarative model, resource blocks as description not instruction, state file, `plan` as three-way diff, idempotency.
+2. ~~`versions.tf` written and verified~~ (`terraform init` succeeds, AWS provider pinned at v5.31.0, lock file committed).
+3. Write remaining Terraform networking files:
    - `main.tf`
    - `variables.tf`
    - `outputs.tf`
    - `security_groups.tf`
    - `iam.tf`
-3. Run `terraform fmt`, `terraform validate`, and `terraform plan`.
+4. Run `terraform fmt`, `terraform validate`, and `terraform plan`.
 
 **No `terraform apply` until the initial plan has been reviewed.**
 

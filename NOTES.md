@@ -77,3 +77,72 @@ project (not hypotheticals), the requirement/constraint gets presented first and
 attempt to name the matching trigger word + component before the answer is confirmed,
 instead of always receiving the fully-reasoned answer directly.
 
+
+
+## Session 4 — 2026-09-11 — Terraform Fundamentals + Tooling Setup
+
+**Declarative vs. imperative** — Project 1's AWS CLI commands were imperative (run this
+step, then this step, then this step). Terraform is declarative: you describe the end
+state you want, and Terraform figures out what needs to happen to reach it.
+
+*This project:* a `resource "aws_vpc" "main" { cidr_block = "172.20.0.0/16" }` block
+reads as a statement ("a VPC with this CIDR should exist"), not a command — there's no
+verb like "create." That's what makes re-running the same files safe.
+
+**Idempotency** — running the same operation multiple times produces the same end
+result, with no duplicate side effects. This is *why* a Terraform resource block being
+a description (not an instruction) matters: running `apply` twice with nothing changed
+does nothing the second time, instead of creating a second copy of everything.
+
+**Terraform state file (`terraform.tfstate`)** — Terraform's memory of what it already
+created (resource IDs, properties). On every run it compares three things: what the
+`.tf` files say should exist, what the state file says was already created, and what's
+actually true in AWS right now.
+
+*This project:* not yet generated — no resources exist yet, so no state file exists
+yet either. Will appear the first time something is actually applied.
+
+**`terraform plan`** — a read-only dry run. Shows what would be created (`+`), changed
+(`~`), or destroyed (`-`) without touching AWS. Safe to run anytime; doesn't require
+approval under this project's approval-gate rules, unlike `apply`.
+
+**Configuration drift** — when real infrastructure no longer matches what the state
+file believes exists (e.g., someone manually deletes a resource in the AWS console).
+`terraform plan` catches this automatically by checking real AWS state, not just the
+state file.
+
+*This project:* reasoned through the example — if the VPC were deleted manually outside
+Terraform, `plan` would report `1 to add`, because the state file still believes it
+exists but AWS confirms it doesn't, and the `.tf` file still says it should.
+
+**Terraform pessimistic constraint operator (`~>`) segment count changes its meaning**
+— `~> 5.31` (two segments) only locks the *first* number, allowing anything from 5.31
+up to (not including) 6.0. `~> 5.31.0` (three segments) locks the first *two* numbers,
+only allowing patch releases within 5.31.x.
+
+*This project:* `~> 5.31` in `versions.tf` installed v5.100.0 on `terraform init` — far
+more drift than intended. Corrected to `~> 5.31.0`, re-ran `terraform init -upgrade`,
+confirmed it now installs exactly v5.31.0.
+
+**Editor vs. terminal — different jobs** — an editor (VS Code) is for writing/viewing
+files; a terminal (Git Bash) is for running commands (`terraform init`, `git commit`,
+etc.). VS Code's integrated terminal just puts both in one window; it doesn't change
+what either one does. The editor choice has zero effect on what "runs in production" —
+it never touches AWS itself, it only produces the files that a terminal/pipeline later
+acts on.
+
+*This project:* switched from heredoc (`cat > file << 'EOF'`) file creation to editing
+directly in VS Code with the HashiCorp Terraform extension (syntax highlighting, inline
+validation) installed and Git Bash set as the integrated terminal.
+
+**Who decides architecture: architect/senior engineer vs. implementer** — in many
+companies a Solutions/Cloud Architect or senior engineer decides the shape of the
+infrastructure (how many subnets, what talks to what) from requirements; DevOps
+engineers implement that decision in Terraform/Ansible/etc. Implementers are still
+expected to catch mistakes and push back, not blindly execute. At smaller companies,
+or in a portfolio project with no one else to decide it, the implementer *is* the one
+doing the requirements-to-architecture reasoning (see Session 3).
+
+*This project:* Project 2 is the "spec already decided" case — the architecture was
+fixed in Project 1, so Phase 1 work here is translation into Terraform syntax, not new
+architecture reasoning. Later projects (3+) hand over more undecided territory.
