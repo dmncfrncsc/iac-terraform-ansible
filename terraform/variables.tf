@@ -33,3 +33,9 @@ variable "az_1b" {
   type        = string
   default     = "us-east-1b"
 }
+
+variable "aws_region" {
+  description = "AWS region to deploy resources"
+  type        = string
+  default     = "us-east-1"
+}

@@ -79,3 +79,58 @@ resource "aws_route_table_association" "public_1b" {
   subnet_id      = aws_subnet.public_1b.id
   route_table_id = aws_route_table.public.id
 }
+
+# SSM VPC Endpoints — allow private instances to reach SSM without internet access
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_1a.id]
+  security_group_ids  = [aws_security_group.ssm_ep.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "vprofile-ssm-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "ssmmessages" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.ssmmessages"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_1a.id]
+  security_group_ids  = [aws_security_group.ssm_ep.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "vprofile-ssmmessages-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "ec2messages" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.ec2messages"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_1a.id]
+  security_group_ids  = [aws_security_group.ssm_ep.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "vprofile-ec2messages-endpoint"
+  }
+}
+
+# Private route table — no internet route, local VPC traffic only
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "vprofile-private-rt"
+  }
+}
+
+# Associate private subnet with the private route table
+resource "aws_route_table_association" "private_1a" {
+  subnet_id      = aws_subnet.private_1a.id
+  route_table_id = aws_route_table.private.id
+}
