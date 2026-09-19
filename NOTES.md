@@ -236,3 +236,105 @@ with the correct 5672-from-app-sg rule.
 **Cost Anomaly Detection → root cause drill-down** — AWS's Billing dashboard flags spending that deviates from the account's historical pattern and can attribute it to a specific usage type, not just a service name — useful for distinguishing "VPC costs money" (misleading; VPCs themselves are free) from what's actually inside it generating the charge.
 
 *This project:* a flagged $5.13 "Amazon Virtual Private Cloud" anomaly (Sept 2–8) resolved via root-cause drill-down to `USE1-VpcEndpoint-Hours` — an Interface VPC Endpoint, confirmed (via `describe-vpc-endpoints` showing only the one free Gateway endpoint currently exists) to be a historical, already-deleted cost from Project 1's SSM endpoints, not a live leak.
+
+## Session 9 — 2026-09-19 — SSM Connectivity Verification & AMI Variant Root Cause
+
+**AWS Systems Manager (SSM) Session Manager** — lets you open a shell on a private
+EC2 instance through AWS's own network, without SSH, a public IP, or an open port 22.
+Requires three things: the SSM agent running on the instance, an IAM role with
+`AmazonSSMManagedInstanceCore`, and (for fully private instances) Interface VPC
+Endpoints for `ssm`, `ssmmessages`, and `ec2messages` so the agent can reach the SSM
+service without internet access.
+
+*This project:* all three pieces were individually correct, yet `aws ssm
+start-session` failed with `TargetNotConnected` for over an hour of troubleshooting.
+
+**Amazon Linux 2023 has a "minimal" AMI variant that silently excludes the SSM agent**
+— alongside the standard variant. Both match the loose naming pattern
+`al2023-ami-*-x86_64`; only the name segment (`al2023-ami-minimal-...` vs.
+`al2023-ami-2023...`) tells them apart. A `data "aws_ami"` filter with a wildcard
+broad enough to match both, combined with `most_recent = true`, can silently resolve
+to the minimal variant with no error or warning.
+
+*This project:* `filter { values = ["al2023-ami-*-x86_64"] }` matched
+`al2023-ami-minimal-2023.12.20260918.0-...` since it was the most recently published
+image at apply time. Every AWS-side networking layer (IAM, security groups, NACLs,
+VPC endpoints, route tables, DNS) was independently verified correct — the actual
+problem was that the SSM agent was never installed on the instance in the first
+place. Fixed by tightening the filter to `al2023-ami-2023.*-x86_64`, which the
+minimal variant's name doesn't match.
+
+**`lifecycle.ignore_changes = [ami]` blocks more than you might expect** — once
+set, Terraform won't propose replacing the instance even when the underlying
+`data.aws_ami` source resolves to a genuinely different AMI (e.g., after fixing a
+bad filter). `terraform plan`/`apply` will report "No changes," which can look like
+the fix didn't take effect even though it did — the data source itself was verified
+correct via a separate `aws ec2 describe-images` call, independent of the ignored
+instance attribute.
+
+**`terraform apply -replace="<resource.address>"`** — forces Terraform to destroy
+and recreate one or more specific resources, overriding `ignore_changes` for that
+one operation, without touching any other resource. Used here to intentionally
+recreate all 4 instances (twice — once to test whether recreation alone would fix
+registration, once again after the AMI filter fix) while leaving VPC, subnets,
+security groups, and endpoints untouched.
+
+**Troubleshooting order matters, and a fix can be valid without being the root
+cause** — the private subnet's missing explicit route table association was a real
+gap (found and fixed this session) but turned out *not* to be why SSM was failing:
+every VPC route table automatically includes an unremovable "local" route for the
+VPC's own CIDR block, which already covered traffic to the endpoint ENIs (their
+private IPs fall inside that CIDR) regardless of explicit table content. The fix
+was kept anyway as correct, explicit infrastructure — but it's a useful lesson that
+"AWS accepted this change and it's a sensible improvement" doesn't automatically
+mean "this was the bug."
+
+**EC2 Serial Console** — an out-of-band console access method independent of all
+VPC networking (security groups, NACLs, routing), authenticated via a short-lived
+SSH key pushed through `aws ec2-instance-connect send-serial-console-ssh-public-key`.
+Useful for diagnosing an instance when the normal network path (SSH or SSM) is
+completely broken — but still requires an OS-level login (password), which a
+default Amazon Linux instance doesn't have set up, so it's a dead end for instances
+that only ever expected key-based or SSM access.
+
+*This project:* used to attempt direct diagnosis of the DB instance mid-investigation;
+confirmed a login prompt was reachable (ruling out total instance failure) but
+couldn't proceed past the password prompt — this was inconclusive rather than
+diagnostic, and the real answer came from checking the AMI name directly instead.
+
+**Ansible fundamentals — inventory, roles, and playbooks** — Ansible uses an
+inventory to identify and group managed hosts, roles to organize reusable
+configuration tasks, and playbooks to define which roles/tasks are applied to which
+hosts. Terraform and Ansible have different ownership boundaries: Terraform
+provisions the infrastructure and its connectivity prerequisites; Ansible performs
+post-boot operating-system and application configuration.
+
+*This project:* the four Terraform-created EC2 instances are the hosts Ansible will
+eventually configure with roles for Tomcat, MariaDB, Memcached, and RabbitMQ. The
+Ansible connectivity method must therefore be decided before Phase 4 role execution.
+
+**Ansible connection plugins** — Ansible's connection layer determines how it reaches
+a managed host. SSH is the familiar default connection method, but Ansible can use
+other connection plugins when the infrastructure requires a different transport.
+For private EC2 instances, SSM can provide the connection path without exposing SSH
+to the public internet.
+
+*This project:* the successful SSM path means Ansible does not need public IPs,
+internet-facing SSH, or an inbound port 22 rule just to configure the four instances.
+The Phase 4 connection decision is therefore SSM, using the appropriate AWS/Ansible
+SSM connection plugin (`community.aws` / `aws_ssm`).
+
+**`cat >` vs. `cat >>`** — shell redirection with `>` writes to a file and overwrites
+its existing contents; `>>` appends to the existing file instead.
+
+*This project:* `cat > file` was used when creating/replacing file contents, while
+`cat >> file` is the pattern to use when adding new content to the end of an existing
+notes/documentation file without overwriting what is already there.
+
+**AWS CLI Billing Credits limitation** — the AWS CLI can query billing/cost data such
+as Cost Explorer results, but the actual remaining Credits balance is not exposed
+through the same CLI cost query; the Credits balance is viewed through the AWS Billing
+console.
+
+*This project:* the account's remaining credit balance had to be checked in the
+Billing console rather than retrieved as a direct AWS CLI Credits-balance value.

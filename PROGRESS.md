@@ -26,6 +26,8 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **Phase 2 & 3 — Terraform EC2 Infrastructure, Apply & Verification: COMPLETE (2026-09-12)**
 
+**SSM Connectivity — VERIFIED (2026-09-19):** SSM Session Manager confirmed working end-to-end to all 4 instances after resolving an AMI variant issue (see Known Issues). Ansible connectivity decision is now resolved: **SSM** is the confirmed connection method, using the AWS `community.aws` or `aws_ssm` Ansible connection plugin. Ready to proceed to Phase 4.
+
 Originally planned as two separate phases (define resources, then apply/verify), but completed together in one continuous session — writing the 4 EC2 instance resources, running `terraform apply` (4 added, 0 changed, 0 destroyed), and verifying against live AWS state all happened without a gap between them, same as how Phase 1 was actually executed. Merged here to reflect actual project history rather than forcing an artificial split. Phase 4 (Ansible roles) requires resolving the Ansible connectivity decision (documented as open in Key Decisions) before role-writing begins.
 
 ## Project Baseline
@@ -144,6 +146,7 @@ The connection method must fit the approved AWS architecture and must not introd
 - Public subnet 1a: `subnet-0b2832c32f46fe494` (`172.20.1.0/24`, us-east-1a)
 - Public subnet 1b: `subnet-01551ca8aef1df0b4` (`172.20.2.0/24`, us-east-1b)
 - Private subnet 1a: `subnet-09325f3c8dd077c24` (`172.20.3.0/24`, us-east-1a)
+- Private route table: `rtb-0714706243c1f3494` (explicit association added Session 9; the private subnet had been relying on the VPC's default main route table with no explicit association since Phase 1)
 
 ### Security Groups
 
@@ -163,12 +166,12 @@ The connection method must fit the approved AWS architecture and must not introd
 
 ### EC2 Instances
 
-- App tier (Tomcat): `i-0a6248eb09d2aee24` (`t3.micro`, `172.20.3.137`, private subnet)
-- DB tier (MariaDB): `i-01ea507a995c1bcd1` (`t3.micro`, `172.20.3.71`, private subnet)
-- Cache tier (Memcached): `i-08901fbfca2706776` (`t3.micro`, `172.20.3.167`, private subnet)
-- MQ tier (RabbitMQ): `i-06971293f76aaf5e2` (`t3.micro`, `172.20.3.224`, private subnet)
+- App tier (Tomcat): `i-07cd82896ef307617` (`t3.micro`, `172.20.3.33`, private subnet)
+- DB tier (MariaDB): `i-00fad7b130b62fb64` (`t3.micro`, `172.20.3.56`, private subnet)
+- Cache tier (Memcached): `i-0adafe2d23aa927fa` (`t3.micro`, `172.20.3.237`, private subnet)
+- MQ tier (RabbitMQ): `i-0e3142d8be4ef6eee` (`t3.micro`, `172.20.3.106`, private subnet)
 
-AMI: Amazon Linux 2023 (resolved dynamically via `data.aws_ami`, pinned per-instance via `lifecycle.ignore_changes` to prevent unplanned replacement on future AMI updates).
+AMI: Amazon Linux 2023 **standard** variant (resolved dynamically via `data.aws_ami`, pinned per-instance via `lifecycle.ignore_changes`). Filter tightened to `al2023-ami-2023.*-x86_64` — see Known Issues for why the original `al2023-ami-*-x86_64` filter was insufficient. Instance IDs above are the third generation of these instances (recreated twice during Session 9 SSM troubleshooting).
 
 ### Secrets
 
@@ -180,6 +183,8 @@ Reused from Project 1; no new secrets planned.
 - Cross-project naming collision: Project 1 (`aws-lift-and-shift`) and Project 2 reuse identical `Name` tags (e.g. `vprofile-app-sg`). An un-scoped tag-only AWS CLI query returned Project 1's SG instead of Project 2's. Fix: always scope security-group/resource lookups by VPC ID, not tag name alone, in this project.
 - **Resolved 2026-09-12:** Project 1's documented "Existing AWS Project State" (master prompt) undercounted its security groups. Live AWS confirms 11 SGs in `vpc-0e686e7841a60b687` (not 9, not the 5 originally listed): `vprofile-alb-sg`, `vprofile-app-sg`, `vprofile-db-sg`, `vprofile-mc-sg`, `vprofile-ssm-ep-sg`, `vprofile-rmq-sg` (`sg-0ba3baa7a8a231777`), `vprofile-rmq-builder-sg`, `vprofile-ami-builder-sg`, `vprofile-secretsmgr-ep-sg`, `vprofile-ec2api-ep-sg`, `default`. Since `rmq-sg` was never in the master prompt's list, Project 2 never reproduced it. Fixed by adding `vprofile-rmq-sg` (`sg-0b8768c70645d442c`) to Project 2 directly, plus the corresponding `ssm_ep` ingress rule and a matching `mc`-tier `ssm_ep` rule that was also found missing during this fix (see NOTES.md Session 7).
 - Unidentified VPC `vpc-0a0efac60df5e3724` found in the account (contains `docker-sg`, `sonar-sg`, no running instances). Origin unconfirmed as of this session. Not part of Project 1 or Project 2 scope. No cost impact (no instances, no NAT, no EIPs, no Interface endpoints found anywhere in the account during this session's cost audit).
+- **Resolved 2026-09-19:** SSM Session Manager could not reach any of the 4 EC2 instances (`describe-instance-information` returned empty, `start-session` failed with `TargetNotConnected`) despite correct IAM role, security groups, and NACLs. Root cause: the `data.aws_ami` filter (`al2023-ami-*-x86_64`) matched both the standard and **minimal** AL2023 AMI variants; `most_recent = true` selected the minimal variant, which does not ship with the SSM agent pre-installed — unlike the standard variant. Fixed by tightening the filter to `al2023-ami-2023.*-x86_64`, which excludes the minimal variant's `al2023-ami-minimal-...` naming pattern, then forcing instance recreation via `terraform apply -replace` (required because `lifecycle.ignore_changes = [ami]` otherwise suppresses AMI updates on existing instances). Verified via `describe-instance-information` (all 4 instances `Online`) and a live `aws ssm start-session` to the DB instance.
+- **Related, corrected during the same investigation:** the private subnet had no explicit route table association (falling back to the VPC's default main route table) since Phase 1. Fixed by adding an explicit `aws_route_table.private` + association. This was applied as a precautionary fix during troubleshooting but was **not the actual root cause** — the VPC's automatic local route already covered traffic to the endpoint ENIs regardless of explicit table content. Kept as a correct, explicit configuration going forward rather than relying on default/implicit routing.
 
 ## Definition of Done
 
