@@ -28,7 +28,13 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **SSM Connectivity — VERIFIED (2026-09-19):** SSM Session Manager confirmed working end-to-end to all 4 instances after resolving an AMI variant issue (see Known Issues). Ansible connectivity decision is now resolved: **SSM** is the confirmed connection method, using the AWS `community.aws` or `aws_ssm` Ansible connection plugin.
 
-**Phase 4 — Ansible Control Node & Connectivity: IN PROGRESS (2026-09-22).** Ansible control node fully set up (WSL2/Ubuntu + pipx) and SSM connectivity verified end-to-end (`ansible -m ping` succeeds on all 4 instances). Role-writing not yet started.
+**Phase 4 — Ansible Roles: IN PROGRESS (2026-09-22).** Ansible control node and SSM connectivity fully verified. Role-writing underway:
+- `mariadb` role — COMPLETE on disk (tasks, handlers, template written and verified via `cat`). NOT yet tested against a live instance.
+- `memcached` role — COMPLETE on disk (tasks, handlers written and verified via `cat`). NOT yet tested against a live instance.
+- `rabbitmq` role — DESIGNED, NOT YET WRITTEN TO DISK. Full task list worked out (signing keys, yum repo via `loop`, package install, service start/enable, Secrets Manager lookup, `test` user creation) but no `cat >` commands run yet.
+- `tomcat` role — NOT STARTED.
+- Top-level `playbook.yml` — NOT STARTED.
+- Nothing from this phase has been run against real AWS state yet, and nothing from this session's role-writing has been committed to git.
 
 Originally planned as two separate phases (define resources, then apply/verify), but completed together in one continuous session — writing the 4 EC2 instance resources, running `terraform apply` (4 added, 0 changed, 0 destroyed), and verifying against live AWS state all happened without a gap between them, same as how Phase 1 was actually executed. Merged here to reflect actual project history rather than forcing an artificial split. Phase 4 (Ansible roles) requires resolving the Ansible connectivity decision (documented as open in Key Decisions) before role-writing begins.
 
@@ -58,6 +64,7 @@ Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints,
 - Project 1 EC2 instances will be terminated instead of imported into Terraform state.
 - No ALB or Interface VPC Endpoints during Phase 1 scope.
 - S3 Gateway VPC Endpoint (`aws_vpc_endpoint.s3`) added in Phase 4 — required for Ansible's `aws_ssm` connection plugin, which relays file transfers through S3. Free (Gateway type), associated with the private route table only.
+- RabbitMQ is installed via Ansible from the official RabbitMQ/Cloudsmith dnf repositories (not a golden AMI, unlike Project 1) — our Terraform-provisioned RabbitMQ instance uses the standard dynamic `data.aws_ami` lookup with nothing pre-installed, so Ansible does the real configuration-management work here. Amazon Linux 2023 uses the "el9" repository family for RabbitMQ/Erlang (confirmed via official current RabbitMQ docs, 2026-09-22) — possibly the actual root cause behind Project 1's own unresolved `dnf install` failure, which may have used "el8" paths on an AL2023 host.
 
 ### Security Decisions
 
@@ -193,6 +200,13 @@ Reused from Project 1; no new secrets planned.
 - Static inventory: `ansible/inventory/hosts.yml`, hosts grouped by tier (`app`, `db`, `cache`, `mq`), targeted by Instance ID via `ansible_host`.
 - Connectivity verified: `ansible all -i inventory/hosts.yml -m ping` → SUCCESS on all 4 hosts (2026-09-22).
 
+### Ansible Roles (Phase 4)
+
+- `roles/mariadb/` — installs MariaDB 10.5 (`mariadb105-server`), sets root password via Secrets Manager (`vprofile/db/admin-password`), configures `bind-address=0.0.0.0`, creates `accounts` database, imports schema from `s3://vprofile-artifacts-747336059892/db/accountsdb.sql` (Project 1's verified schema — `role`, `user`, `user_role` tables), creates `admin` application user (`accounts.*:ALL`, host `%`). Database/user naming confirmed against Project 1's actual verified `PROGRESS.md`, not assumed.
+- `roles/memcached/` — installs `memcached`, configures listen address via `lineinfile` on `/etc/sysconfig/memcached` (`OPTIONS="-l 0.0.0.0"`). No auth (Memcached has none) — security boundary is `vprofile-mc-sg` alone.
+- `roles/rabbitmq/` — designed, not yet written to disk. Will install Erlang + RabbitMQ from the official `el9`-family Cloudsmith-mirror dnf repos, then create the `test` admin user (matching Project 1's verified `rabbitmqctl` setup) via `community.rabbitmq.rabbitmq_user`, password from Secrets Manager (`vprofile/rmq/test-password`).
+- `roles/tomcat/` — not started.
+
 ## Known Issues
 
 - Documentation miscount: this file previously stated Phase 1 would produce 13 resources; itemized breakdown actually sums to 17, matching `terraform plan`/`apply` output exactly. No config issue — corrected here.
@@ -204,6 +218,8 @@ Reused from Project 1; no new secrets planned.
 - **Resolved 2026-09-22:** `ansible -m ping` hung indefinitely on all 4 instances despite SSM sessions establishing successfully. Root cause: the VPC had no path to S3 (no NAT Gateway, no S3 Gateway Endpoint) — `aws_ssm`'s file-transfer step (uploading module code via a presigned S3 URL) had nowhere to route. Diagnosed via `ansible -vvvv` (showed the `curl` to S3 hanging) and confirmed via `describe-vpc-endpoints` (only the 3 SSM Interface endpoints existed). Fixed by adding `aws_vpc_endpoint.s3` (Gateway type, free, private route table only) via Terraform; verified via successful `terraform plan`/`apply` and an immediately-successful `ansible -m ping` afterward.
 - **Note, not a defect:** all 4 EC2 instances were found `stopped` at the start of this session (last verified `running` in Session 9). Restarted and re-verified `Online` in SSM before continuing — a reminder that instance state isn't guaranteed to persist between sessions and should be checked, not assumed.
 
+- **Architecture gap found 2026-09-22 (Phase 4 role-writing):** Project 2's RabbitMQ EC2 instance uses the standard dynamic AL2023 AMI lookup, which has no RabbitMQ pre-installed — unlike Project 1's golden-AMI workaround for AL2023's packaging gap. Resolved by deciding to install RabbitMQ properly via Ansible from official Cloudsmith `el9`-family repos, rather than reusing Project 1's golden AMI or adding a NAT Gateway. Not yet implemented/tested.
+- **Useful finding for Project 1 cross-reference (not a Project 2 defect):** official current RabbitMQ docs confirm Amazon Linux 2023 belongs to the "el9" repo family, not "el8." Project 1's own unresolved Known Issue (`dnf install` failing after fixing Cloudsmith URLs) may have used el8-family paths on an AL2023 host — unconfirmed, just flagged as a plausible root cause if Project 1 is ever revisited.
 ## Definition of Done
 
 ### Terraform
@@ -257,9 +273,18 @@ Reused from Project 1; no new secrets planned.
 
 ## Next Step
 
-### Phase 4 — Ansible Roles
+### Phase 4 — Ansible Roles (resume here)
 
-Control node and SSM connectivity fully verified (2026-09-22). Next: write roles for MariaDB, Memcached, RabbitMQ, and Tomcat, then a top-level `playbook.yml` tying roles to inventory groups.
+1. Write `roles/rabbitmq/tasks/main.yml` and `handlers/main.yml` to disk — task list already fully designed (signing keys → yum repos via `loop` → package install → service start/enable → Secrets Manager lookup → `test` user creation). Nothing written to disk yet.
+2. Write the `tomcat` role (not started/designed).
+3. Write top-level `playbook.yml` tying all 4 roles to inventory groups (`app`, `db`, `cache`, `mq`).
+4. Run the full playbook against the real instances for the first time — nothing tested against live AWS yet; `mariadb`/`memcached` are written but unverified.
+5. Run the playbook a **second time**, check `changed: false` across all tasks — this is the deferred MariaDB root-password idempotency check (see NOTES.md Session 12) — verify, don't assume.
+6. Commit and push once tested — nothing from this session's role-writing is committed yet.
+
+**Cost note:** all 4 EC2 instances were left `running` at end of session (needed for upcoming testing) — verify current state at the start of next session rather than assuming (see NOTES.md Session 11, "instance state can drift between sessions").
+
+**Session-start guidance:** review NOTES.md Session 12 before continuing — a large amount of new Ansible/RabbitMQ reasoning was covered. Continue matching the student's explicit explanation preference: literal, no metaphors/analogies, line-by-line breakdowns of code, and explicit "why this over that / is this best practice / interview-relevant" framing for every meaningful choice. This is now the default teaching style for the rest of this project, not a one-session adjustment.
 
 ## Assumptions
 

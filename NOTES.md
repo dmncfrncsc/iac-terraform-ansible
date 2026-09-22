@@ -449,3 +449,61 @@ at the start of this session despite being verified `running`/`Online` in Sessio
 *This project:* confirmed via `describe-instances` before assuming Ansible/SSM was broken
 again, rather than guessing; restarted all 4, waited for `describe-instance-information`
 to show `PingStatus: Online` before retrying Ansible.
+
+## Session 12 — 2026-09-22 — Ansible Roles: MariaDB, Memcached, RabbitMQ (design)
+
+**Ansible role directory structure is a fixed convention, not a free choice** — `tasks/`, `handlers/`, `templates/`, `files/`, `vars/`, `defaults/` are recognized by any Ansible user; using it (even partially, using only the folders a role actually needs) signals familiarity with the tool's standard layout.
+
+*This project:* `mariadb` and `memcached` roles both use only `tasks/` + `handlers/` (+`templates/` for mariadb) — no `files/`/`vars/`/`defaults/` needed at this portfolio scale.
+
+**`state: present` vs `state: latest` (package modules) — idempotency-driven, not just "which is safer"** — `present` means "install only if missing, never touch it again if it exists"; `latest` would re-check for upgrades on every single run, meaning a playbook could change (upgrade) something on run 50 that had nothing to do with why you're running it that day.
+
+*This project:* every `dnf`/`yum_repository` task in `mariadb`/`memcached`/`rabbitmq` uses `present`, deliberately, for reproducible, predictable runs.
+
+**`template` vs `lineinfile` vs `copy` — pick based on how much of the file you control** — `template`: replace/render a whole file you own (used for MariaDB's multi-setting `.cnf` file). `lineinfile`: find-and-fix exactly one line in a file you don't fully own (used for Memcached's `/etc/sysconfig/memcached`, which has several unrelated settings we don't want to touch). `copy`: move a file byte-for-byte with no variable substitution — not used yet this project, but the plain option when `template`'s Jinja2 rendering isn't needed at all.
+
+*This project:* `mariadb-server.cnf.j2` (whole-file replace) vs. Memcached's single `OPTIONS=` line — same underlying goal (accept connections from other instances, not just localhost), two different tools because the amount of file we control differs.
+
+**Handlers (`notify`) exist to make idempotency real, not just "restart when I remember to"** — a normal task placed right after a config-file task would restart the service on literally every playbook run, forever, even the 100th run where nothing changed. `notify` only fires the named handler if the *triggering* task actually reported a change.
+
+*This project:* both `mariadb`'s and `memcached`'s config tasks use `notify: Restart <service>` — restart only happens the run a setting actually changes, never otherwise.
+
+**"Listen on all interfaces" (`bind-address=0.0.0.0` / `-l 0.0.0.0`) is required whenever the client and server are different machines** — by default MariaDB and Memcached only accept connections that originate from the same machine (`localhost`/`127.0.0.1`). Since Tomcat lives on a separate EC2 instance from both, both backend services need this setting changed, or the app's connection attempt is refused before permissions are even checked.
+
+*This project:* the actual network-level security boundary is the security group (`vprofile-db-sg`/`vprofile-mc-sg`, both scoped to `vprofile-app-sg` only) — "listen everywhere" doesn't mean "reachable by everyone," since the SG still gatekeeps who can even attempt a connection.
+
+**MySQL/MariaDB user identity = username + host, not username alone** — `admin@localhost` and `admin@'%'` are two entirely separate accounts to MySQL/MariaDB, even with the same username. `%` is the wildcard meaning "any host."
+
+*This project:* the `admin` user is created with `host: "%"` specifically because Tomcat connects from a different EC2 instance, not `localhost`.
+
+**`community.aws.secretsmanager_secret` lookup — fetches a secret live at playbook-run time, never stores it in a file** — paired with `no_log: true` on the task that calls it, so the retrieved value also never gets printed to terminal/log output. This is the Ansible-native way of avoiding hardcoded credentials, similar in spirit to Terraform variables but mechanically different: Terraform variables are *supplied*; this lookup is *fetched from a live AWS API call* each run.
+
+*This project:* used twice — `mariadb_root_password` (from `vprofile/db/admin-password`) and `rabbitmq_test_password` (from `vprofile/rmq/test-password`), both reused from Project 1's existing secrets.
+
+**MariaDB root-password bootstrap is a real, deferred idempotency question, not yet resolved** — a fresh MariaDB install has no root password, so the very first login (via `login_unix_socket`, a passwordless local connection method) can't use `login_password` yet. Whether this same task behaves correctly (`changed: false`) on the *second* playbook run — once a password already exists — is not yet verified. Decision: don't solve this on paper; run the playbook twice for real once it's complete, and treat the actual second-run output as the answer.
+
+**MariaDB is a fork of MySQL, not a different product wearing MySQL's protocol as a costume** — created by original MySQL developers after Oracle's acquisition, over licensing/control concerns. Stays highly compatible (same SQL syntax, same wire protocol) because it started as an exact copy and diverged from there.
+
+*This project:* this is *why* `community.mysql`'s modules (`mysql_db`, `mysql_user`) work correctly against MariaDB even though the collection is literally named after MySQL — the module talks over the shared MySQL protocol both implement.
+
+**A "complete-looking" role can still be missing something a first draft didn't check for** — the first version of the `mariadb` role only created an *empty* `accounts` database. Cross-checking Project 1's own actual, verified `PROGRESS.md` (not assumption, not a generic course convention) revealed the real Project 1 also imported a schema file (`accountsdb.sql`, from S3) containing real tables (`role`, `user`, `user_role`) — without which the app would still fail to work even with a correctly-named, correctly-permissioned database.
+
+*This project:* fixed by adding two tasks — `amazon.aws.s3_object` (download the schema from `s3://vprofile-artifacts-747336059892/db/accountsdb.sql`) and `community.mysql.mysql_db` with `state: import` (load it) — inserted between database creation and user creation.
+
+**A Terraform decision made earlier in the project can silently invalidate an assumption made later** — Project 2's `rabbitmq` EC2 instance was provisioned using the same dynamic AL2023 AMI lookup as the other 3 instances. That's fine for MariaDB/Memcached/Tomcat, but RabbitMQ specifically has no package in AL2023's default repos at all (the same packaging gap Project 1 hit) — meaning our current instance has *no RabbitMQ installed whatsoever*, unlike Project 1, which used a purpose-built golden AMI to route around this exact gap.
+
+*This project:* deliberate decision (Option B of three considered) to install RabbitMQ properly via Ansible, from the real upstream repos, rather than reusing Project 1's golden AMI (which would make Ansible do nothing for this one service) or introducing a NAT Gateway (already explicitly rejected in Project 1 for cost reasons).
+
+**Amazon Linux 2023 uses the "el9" RabbitMQ/Erlang repository family, not "el8"** — confirmed directly from RabbitMQ's own current official docs (2026-09-22), which explicitly list Amazon Linux 2023 under the same repo group as RHEL 9/CentOS Stream 9/Rocky 9, not RHEL 8.
+
+*This project:* directly relevant to writing a *working* RabbitMQ role here — and also a plausible (unconfirmed) explanation for Project 1's own still-open Known Issue, where `dnf install` kept failing even after the Cloudsmith URLs themselves were fixed to return 200. Worth checking against Project 1's actual repo file content if that project is ever revisited.
+
+**`rpm_key` and `yum_repository` modules exist so GPG-key-import and repo-file-creation are idempotent, not raw shell commands** — a raw `rpm --import` or a hand-written repo file would either always report "changed" or require manually diffing file contents to know if anything's different. The dedicated modules understand the actual state being managed and only act when something's genuinely different.
+
+**`loop` lets one task definition run multiple times over a list of items** — avoids writing near-duplicate tasks that differ only in a couple of values.
+
+*This project:* one `yum_repository` task, looped over two dictionaries (`modern-erlang` and `rabbitmq-el9`), instead of writing the same task twice with copy-pasted values.
+
+**`community.rabbitmq.rabbitmq_user` maps directly, one parameter at a time, onto the exact `rabbitmqctl` commands Project 1 ran manually** — `user`/`password`/`state` ↔ `add_user`; `tags` ↔ `set_user_tags`; `vhost`+`configure_priv`/`write_priv`/`read_priv` ↔ `set_permissions`. Same permission model Project 1 used (full admin rights on default vhost `/`) — a trade-off Project 1 already named as "not least-privilege, acceptable for a portfolio-scale single-app broker," carried forward here rather than re-decided.
+
+**Teaching-preference note for continuity (not a technical lesson, but worth recording):** this session, explanations shifted to a more literal, non-metaphor, line-by-line style at the student's explicit request — including breaking down individual YAML lines one at a time, and always stating "why this choice, not the alternative, and is it best practice / interview-relevant" for meaningful decisions. This preference should carry forward as the default teaching style for the rest of this project, not just this session.
