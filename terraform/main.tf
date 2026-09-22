@@ -120,6 +120,17 @@ resource "aws_vpc_endpoint" "ec2messages" {
   }
 }
 
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.us-east-1.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = {
+    Name = "vprofile-s3-endpoint"
+  }
+}
+
 # Private route table — no internet route, local VPC traffic only
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id

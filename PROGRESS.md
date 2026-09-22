@@ -26,7 +26,9 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **Phase 2 & 3 — Terraform EC2 Infrastructure, Apply & Verification: COMPLETE (2026-09-12)**
 
-**SSM Connectivity — VERIFIED (2026-09-19):** SSM Session Manager confirmed working end-to-end to all 4 instances after resolving an AMI variant issue (see Known Issues). Ansible connectivity decision is now resolved: **SSM** is the confirmed connection method, using the AWS `community.aws` or `aws_ssm` Ansible connection plugin. Ready to proceed to Phase 4.
+**SSM Connectivity — VERIFIED (2026-09-19):** SSM Session Manager confirmed working end-to-end to all 4 instances after resolving an AMI variant issue (see Known Issues). Ansible connectivity decision is now resolved: **SSM** is the confirmed connection method, using the AWS `community.aws` or `aws_ssm` Ansible connection plugin.
+
+**Phase 4 — Ansible Control Node & Connectivity: IN PROGRESS (2026-09-22).** Ansible control node fully set up (WSL2/Ubuntu + pipx) and SSM connectivity verified end-to-end (`ansible -m ping` succeeds on all 4 instances). Role-writing not yet started.
 
 Originally planned as two separate phases (define resources, then apply/verify), but completed together in one continuous session — writing the 4 EC2 instance resources, running `terraform apply` (4 added, 0 changed, 0 destroyed), and verifying against live AWS state all happened without a gap between them, same as how Phase 1 was actually executed. Merged here to reflect actual project history rather than forcing an artificial split. Phase 4 (Ansible roles) requires resolving the Ansible connectivity decision (documented as open in Key Decisions) before role-writing begins.
 
@@ -55,6 +57,7 @@ Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints,
 - Flat Terraform files first; modular refactor deferred until fundamentals are complete.
 - Project 1 EC2 instances will be terminated instead of imported into Terraform state.
 - No ALB or Interface VPC Endpoints during Phase 1 scope.
+- S3 Gateway VPC Endpoint (`aws_vpc_endpoint.s3`) added in Phase 4 — required for Ansible's `aws_ssm` connection plugin, which relays file transfers through S3. Free (Gateway type), associated with the private route table only.
 
 ### Security Decisions
 
@@ -147,6 +150,7 @@ The connection method must fit the approved AWS architecture and must not introd
 - Public subnet 1b: `subnet-01551ca8aef1df0b4` (`172.20.2.0/24`, us-east-1b)
 - Private subnet 1a: `subnet-09325f3c8dd077c24` (`172.20.3.0/24`, us-east-1a)
 - Private route table: `rtb-0714706243c1f3494` (explicit association added Session 9; the private subnet had been relying on the VPC's default main route table with no explicit association since Phase 1)
+- S3 Gateway VPC Endpoint: added Session 11, associated with the private route table (free; required for Ansible's `aws_ssm` file transfer)
 
 ### Security Groups
 
@@ -177,6 +181,18 @@ AMI: Amazon Linux 2023 **standard** variant (resolved dynamically via `data.aws_
 
 Reused from Project 1; no new secrets planned.
 
+### Ansible Control Node & Connectivity
+
+- Control node: WSL2 (Ubuntu 26.04) on the same Windows machine, via pipx-isolated install.
+- Ansible: 14.4.0 (ansible-core 2.21.4), Python 3.14.4.
+- Collections: `amazon.aws` 11.4.0, `community.aws` 11.1.0 (bundled with the full `ansible` package).
+- `boto3`/`botocore` injected into the pipx venv via `pipx inject`.
+- `session-manager-plugin` (Linux/.deb build) installed separately in Ubuntu — required alongside AWS CLI for SSM sessions.
+- AWS CLI v2.36.50 installed and configured in Ubuntu, same `gitops-terraform` IAM identity as Windows — verified via `aws sts get-caller-identity`.
+- S3 relay bucket (required by `aws_ssm` for file transfer): `vprofile-ansible-ssm-1790055238`.
+- Static inventory: `ansible/inventory/hosts.yml`, hosts grouped by tier (`app`, `db`, `cache`, `mq`), targeted by Instance ID via `ansible_host`.
+- Connectivity verified: `ansible all -i inventory/hosts.yml -m ping` → SUCCESS on all 4 hosts (2026-09-22).
+
 ## Known Issues
 
 - Documentation miscount: this file previously stated Phase 1 would produce 13 resources; itemized breakdown actually sums to 17, matching `terraform plan`/`apply` output exactly. No config issue — corrected here.
@@ -185,6 +201,8 @@ Reused from Project 1; no new secrets planned.
 - Unidentified VPC `vpc-0a0efac60df5e3724` found in the account (contains `docker-sg`, `sonar-sg`, no running instances). Origin unconfirmed as of this session. Not part of Project 1 or Project 2 scope. No cost impact (no instances, no NAT, no EIPs, no Interface endpoints found anywhere in the account during this session's cost audit).
 - **Resolved 2026-09-19:** SSM Session Manager could not reach any of the 4 EC2 instances (`describe-instance-information` returned empty, `start-session` failed with `TargetNotConnected`) despite correct IAM role, security groups, and NACLs. Root cause: the `data.aws_ami` filter (`al2023-ami-*-x86_64`) matched both the standard and **minimal** AL2023 AMI variants; `most_recent = true` selected the minimal variant, which does not ship with the SSM agent pre-installed — unlike the standard variant. Fixed by tightening the filter to `al2023-ami-2023.*-x86_64`, which excludes the minimal variant's `al2023-ami-minimal-...` naming pattern, then forcing instance recreation via `terraform apply -replace` (required because `lifecycle.ignore_changes = [ami]` otherwise suppresses AMI updates on existing instances). Verified via `describe-instance-information` (all 4 instances `Online`) and a live `aws ssm start-session` to the DB instance.
 - **Related, corrected during the same investigation:** the private subnet had no explicit route table association (falling back to the VPC's default main route table) since Phase 1. Fixed by adding an explicit `aws_route_table.private` + association. This was applied as a precautionary fix during troubleshooting but was **not the actual root cause** — the VPC's automatic local route already covered traffic to the endpoint ENIs regardless of explicit table content. Kept as a correct, explicit configuration going forward rather than relying on default/implicit routing.
+- **Resolved 2026-09-22:** `ansible -m ping` hung indefinitely on all 4 instances despite SSM sessions establishing successfully. Root cause: the VPC had no path to S3 (no NAT Gateway, no S3 Gateway Endpoint) — `aws_ssm`'s file-transfer step (uploading module code via a presigned S3 URL) had nowhere to route. Diagnosed via `ansible -vvvv` (showed the `curl` to S3 hanging) and confirmed via `describe-vpc-endpoints` (only the 3 SSM Interface endpoints existed). Fixed by adding `aws_vpc_endpoint.s3` (Gateway type, free, private route table only) via Terraform; verified via successful `terraform plan`/`apply` and an immediately-successful `ansible -m ping` afterward.
+- **Note, not a defect:** all 4 EC2 instances were found `stopped` at the start of this session (last verified `running` in Session 9). Restarted and re-verified `Online` in SSM before continuing — a reminder that instance state isn't guaranteed to persist between sessions and should be checked, not assumed.
 
 ## Definition of Done
 
@@ -241,7 +259,7 @@ Reused from Project 1; no new secrets planned.
 
 ### Phase 4 — Ansible Roles
 
-Phase 2 & 3 complete and verified. Before writing Ansible roles: resolve the open Ansible Connectivity decision (see Key Decisions) — instances are private with no public IP or SSH access, so connectivity must go through the existing SSM infrastructure (SSM VPC endpoints + `ssm_ep` security group, both already provisioned) or an equivalent method that doesn't introduce public exposure.
+Control node and SSM connectivity fully verified (2026-09-22). Next: write roles for MariaDB, Memcached, RabbitMQ, and Tomcat, then a top-level `playbook.yml` tying roles to inventory groups.
 
 ## Assumptions
 

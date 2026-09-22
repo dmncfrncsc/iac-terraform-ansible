@@ -338,3 +338,114 @@ console.
 
 *This project:* the account's remaining credit balance had to be checked in the
 Billing console rather than retrieved as a direct AWS CLI Credits-balance value.
+
+## Session 10 — 2026-09-22 — Ansible Local Install (WSL2 + pipx)
+
+**Ansible requires a real Linux environment, not Git Bash** — Git Bash emulates a
+Unix-like shell on Windows but isn't a real Linux kernel, which Ansible's control
+node needs. Confirmed via `ansible --version` → `command not found`.
+
+**WSL2 vs. Docker vs. EC2 as a "get me Linux" fix** — WSL2 was chosen over running
+Ansible in a Docker container (adds friction for a tool used interactively and
+constantly) or from an EC2 instance (real, billable, always-on infrastructure just
+to get a shell, plus file-sync overhead). WSL2 runs a genuine Linux kernel alongside
+Windows at the OS level, for free, with direct access to the same files (no upload
+needed) via `/mnt/g/...`.
+
+*This project:* WSL2 was already present (used internally by Docker Desktop, distro
+`docker-desktop`), but that distro isn't meant for general use — a real distro
+(Ubuntu) still had to be installed via `wsl --install -d Ubuntu`.
+
+**pipx over `apt` or system-wide `pip` for installing Ansible** — `apt install
+ansible` ships an older, stability-frozen version that may not meet the
+`amazon.aws`/`community.aws` collection's minimum-version requirements. System-wide
+`pip install ansible` gets the latest version but risks polluting Ubuntu's system
+Python with dependencies that later conflict with other tools ("dependency hell").
+`pipx` gives the latest version in its own isolated environment while still exposing
+the `ansible` command globally — this is Ansible's own current recommended install
+method for exactly this reason.
+
+*This project:* `pipx install --include-deps ansible` installed ansible 14.4.0
+(ansible-core 2.21.4) under `/home/domin/.local/share/pipx/venvs/ansible/`, exposing
+`ansible`, `ansible-playbook`, `ansible-galaxy`, etc. globally via `pipx ensurepath`.
+
+## Session 11 — 2026-09-22 — Ansible SSM Connectivity End-to-End
+
+**`wsl -u root` without `-d` hits the *default* distro, not necessarily the one you're
+working in** — WSL's default distro can differ from the one you actually intend.
+
+*This project:* `wsl -u root` dropped into `docker-desktop` (the default), giving
+`passwd: unknown user domin`. Fixed with `wsl -u root -d Ubuntu`.
+
+**NTFS-mounted paths (`/mnt/g/...`) break Linux-style installs** — NTFS doesn't support
+Unix permissions/timestamps, and Windows paths with spaces can break scripts that assume
+POSIX path parsing.
+
+*This project:* `unzip`-ing the AWS CLI installer under `/mnt/g/Tutorial Folder/...`
+produced a wall of `fchmod ... Operation not permitted` warnings, and `sudo ./aws/install`
+failed outright with `/mnt/g/Tutorial: not found` (broken by the space in "Tutorial
+Folder"). Fixed by installing from `~` (native Linux filesystem) instead — same fix later
+reused for `session-manager-plugin`.
+
+**Each OS environment needs its own AWS CLI install *and* credentials** — Windows and
+WSL2/Ubuntu are separate environments; nothing installed or configured on one side is
+visible on the other.
+
+*This project:* `aws` worked fine in Git Bash all project, but Ubuntu had no `aws` binary
+and an empty credentials file. Installed AWS CLI v2.36.50 and ran `aws configure` inside
+Ubuntu using the same `gitops-terraform` IAM user, verified via `aws sts
+get-caller-identity`.
+
+**`pipx inject`** — adds a Python package into an *already pipx-installed* app's isolated
+environment, for a dependency the app needs but wasn't bundled with.
+
+*This project:* Ansible's AWS modules need `boto3`/`botocore` to call AWS's API, but
+pipx's isolated Ansible venv only had `botocore`. Fixed with `pipx inject ansible boto3
+botocore`.
+
+**`session-manager-plugin` is a separate binary, per OS, not part of the AWS CLI itself**
+— SSM session support depends on this external helper, and it doesn't cross OS
+boundaries.
+
+*This project:* the Windows copy (visible on PATH via `/mnt/c/...`) is a `.exe`, unusable
+inside Linux. Downloaded and `dpkg -i`'d the Ubuntu-native `.deb` build separately.
+
+**Ansible inventory targeting for `aws_ssm`** — `ansible_host` holds the EC2 **Instance
+ID**, not an IP/hostname, since that's what the SSM API uses to identify a target.
+
+*This project:* `inventory/hosts.yml` groups all 4 instances by tier (`app`, `db`,
+`cache`, `mq`), each with `ansible_host: i-0...`, plus shared `vars` for
+`ansible_connection: community.aws.aws_ssm`, region, and the relay bucket name.
+
+**`aws_ssm` needs an S3 bucket for file transfer, unlike a live SSH/SSM shell session** —
+the plugin uploads files to S3, then has the instance download them from there; a
+transient relay, not permanent storage.
+
+*This project:* created `vprofile-ansible-ssm-<timestamp>` purely for this purpose,
+referenced via `ansible_aws_ssm_bucket_name` in the inventory.
+
+**A working raw SSM shell session doesn't guarantee Ansible will work** — Session
+Manager's interactive shell and Ansible's `aws_ssm` file-transfer path exercise different
+capabilities of the same service.
+
+*This project:* Session 9's successful `aws ssm start-session` only proved basic
+connectivity — it never needed S3. The first real Ansible task (`ping`) immediately
+exposed a gap that a raw shell session couldn't have caught.
+
+**Real architecture gap: no network path from private instances to S3** — this project's
+private subnet had neither a NAT Gateway nor an S3 Gateway Endpoint, so any attempt to
+reach S3 (as opposed to the SSM API itself) had nowhere to route.
+
+*This project:* diagnosed via `ansible -vvvv`, which showed the instance's `curl` to a
+presigned S3 URL hanging indefinitely; confirmed via `describe-vpc-endpoints` showing
+only the 3 SSM Interface endpoints existed. Fixed by adding `aws_vpc_endpoint.s3` (Gateway
+type — free, unlike Interface endpoints — associated with the private route table) in
+Terraform. `terraform plan` showed exactly 1 to add; `apply` succeeded; `ansible -m ping`
+then succeeded on all 4 hosts immediately after.
+
+**Instance state can drift between sessions** — all 4 EC2 instances were found `stopped`
+at the start of this session despite being verified `running`/`Online` in Session 9.
+
+*This project:* confirmed via `describe-instances` before assuming Ansible/SSM was broken
+again, rather than guessing; restarted all 4, waited for `describe-instance-information`
+to show `PingStatus: Online` before retrying Ansible.
