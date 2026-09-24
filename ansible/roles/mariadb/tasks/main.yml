@@ -1,3 +1,10 @@
+- name: Install boto3 and botocore for S3 module support
+  ansible.builtin.dnf:
+    name:
+      - python3-boto3
+      - python3-botocore
+    state: present
+
 - name: Retrieve MariaDB root password from Secrets Manager
   ansible.builtin.set_fact:
     mariadb_root_password: "{{ lookup('community.aws.secretsmanager_secret', 'vprofile/db/admin-password', region='us-east-1') }}"

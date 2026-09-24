@@ -1,4 +1,11 @@
 ---
+- name: Install boto3 and botocore for S3 module support
+  ansible.builtin.dnf:
+    name:
+      - python3-boto3
+      - python3-botocore
+    state: present
+
 - name: Install Java
   ansible.builtin.dnf:
     name: java-17-amazon-corretto
