@@ -1,0 +1,50 @@
+---
+- name: Import RabbitMQ GPG signing key
+  ansible.builtin.rpm_key:
+    key: https://github.com/rabbitmq/signing-keys/releases/download/3.0/rabbitmq-release-signing-key.asc
+    state: present
+
+- name: Add RabbitMQ and Erlang yum repositories
+  ansible.builtin.yum_repository:
+    name: "{{ item.name }}"
+    description: "{{ item.description }}"
+    baseurl: "{{ item.baseurl }}"
+    gpgcheck: yes
+    enabled: yes
+  loop:
+    - name: modern-erlang
+      description: "Modern Erlang packages"
+      baseurl: https://packagecloud.io/rabbitmq/erlang/el/9/$basearch
+    - name: rabbitmq-el9
+      description: "RabbitMQ server packages"
+      baseurl: https://packagecloud.io/rabbitmq/rabbitmq-server/el/9/$basearch
+
+- name: Install Erlang and RabbitMQ packages
+  ansible.builtin.dnf:
+    name:
+      - erlang
+      - rabbitmq-server
+    state: present
+
+- name: Start and enable RabbitMQ service
+  ansible.builtin.service:
+    name: rabbitmq-server
+    state: started
+    enabled: true
+
+- name: Retrieve RabbitMQ test user password from Secrets Manager
+  ansible.builtin.set_fact:
+    rabbitmq_test_password: "{{ lookup('community.aws.secretsmanager_secret', 'vprofile/rmq/test-password') }}"
+  no_log: true
+
+- name: Create RabbitMQ test admin user
+  community.rabbitmq.rabbitmq_user:
+    user: test
+    password: "{{ rabbitmq_test_password }}"
+    tags: administrator
+    vhost: /
+    configure_priv: .*
+    write_priv: .*
+    read_priv: .*
+    state: present
+  no_log: true

@@ -1,0 +1,24 @@
+---
+- name: Configure vprofile application tier
+  hosts: app
+  become: true
+  roles:
+    - tomcat
+
+- name: Configure vprofile database tier
+  hosts: db
+  become: true
+  roles:
+    - mariadb
+
+- name: Configure vprofile cache tier
+  hosts: cache
+  become: true
+  roles:
+    - memcached
+
+- name: Configure vprofile message queue tier
+  hosts: mq
+  become: true
+  roles:
+    - rabbitmq
