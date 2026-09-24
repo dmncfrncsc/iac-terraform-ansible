@@ -51,3 +51,26 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   name = "vprofile-ec2-instance-profile"
   role = aws_iam_role.ec2_role.name
 }
+
+# Least-privilege policy: read-only access to the specific artifacts bucket
+# used for the vprofile WAR file and database schema
+resource "aws_iam_role_policy" "s3_artifacts_access" {
+  name = "vprofile-s3-artifacts-access"
+  role = aws_iam_role.ec2_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = "arn:aws:s3:::vprofile-artifacts-747336059892"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "arn:aws:s3:::vprofile-artifacts-747336059892/*"
+      }
+    ]
+  })
+}
