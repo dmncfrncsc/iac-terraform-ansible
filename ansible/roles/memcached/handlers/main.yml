@@ -1,5 +1,4 @@
----
-- name: Restart Tomcat
+- name: Restart Memcached
   ansible.builtin.service:
-    name: tomcat9
+    name: memcached
     state: restarted

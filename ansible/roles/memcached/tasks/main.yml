@@ -1,0 +1,17 @@
+- name: Install Memcached
+  ansible.builtin.dnf:
+    name: memcached
+    state: present
+
+- name: Start and enable Memcached service
+  ansible.builtin.service:
+    name: memcached
+    state: started
+    enabled: true
+
+- name: Configure Memcached to listen on all interfaces
+  ansible.builtin.lineinfile:
+    path: /etc/sysconfig/memcached
+    regexp: '^OPTIONS='
+    line: 'OPTIONS="-l 0.0.0.0"'
+  notify: Restart Memcached

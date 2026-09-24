@@ -1,5 +1,4 @@
----
-- name: Restart Tomcat
+- name: Restart MariaDB
   ansible.builtin.service:
-    name: tomcat9
+    name: mariadb
     state: restarted

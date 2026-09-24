@@ -6,19 +6,19 @@
 
 - name: Install Tomcat
   ansible.builtin.dnf:
-    name: tomcat
+    name: tomcat9
     state: present
 
 - name: Download vprofile application WAR file from S3
   amazon.aws.s3_object:
     bucket: vprofile-artifacts-747336059892
     object: app/vprofile-v2.war
-    dest: /opt/tomcat/webapps/vprofile.war
+    dest: /usr/share/tomcat9/webapps/vprofile.war
     mode: get
   notify: Restart Tomcat
 
 - name: Start and enable Tomcat service
   ansible.builtin.service:
-    name: tomcat
+    name: tomcat9
     state: started
     enabled: true

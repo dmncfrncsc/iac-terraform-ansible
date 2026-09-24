@@ -1,0 +1,68 @@
+- name: Retrieve MariaDB root password from Secrets Manager
+  ansible.builtin.set_fact:
+    mariadb_root_password: "{{ lookup('community.aws.secretsmanager_secret', 'vprofile/db/admin-password', region='us-east-1') }}"
+  no_log: true
+
+- name: Retrieve MariaDB application user password from Secrets Manager
+  ansible.builtin.set_fact:
+    mariadb_app_password: "{{ lookup('community.aws.secretsmanager_secret', 'vprofile/db/app-password', region='us-east-1') }}"
+  no_log: true
+
+- name: Install MariaDB server
+  ansible.builtin.dnf:
+    name: mariadb105-server
+    state: present
+
+- name: Start and enable MariaDB service
+  ansible.builtin.service:
+    name: mariadb
+    state: started
+    enabled: true
+
+- name: Set MariaDB root password
+  ansible.mysql.mysql_user:
+    name: root
+    password: "{{ mariadb_root_password }}"
+    login_unix_socket: /var/lib/mysql/mysql.sock
+    check_implicit_admin: true
+
+- name: Configure MariaDB to listen on all interfaces
+  ansible.builtin.template:
+    src: mariadb-server.cnf.j2
+    dest: /etc/my.cnf.d/mariadb-server.cnf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart MariaDB
+
+- name: Create application database
+  ansible.mysql.mysql_db:
+    name: accounts
+    state: present
+    login_user: root
+    login_password: "{{ mariadb_root_password }}"
+
+- name: Download database schema from S3
+  amazon.aws.s3_object:
+    bucket: vprofile-artifacts-747336059892
+    object: db/accountsdb.sql
+    dest: /tmp/accountsdb.sql
+    mode: get
+
+- name: Import database schema
+  ansible.mysql.mysql_db:
+    name: accounts
+    state: import
+    target: /tmp/accountsdb.sql
+    login_user: root
+    login_password: "{{ mariadb_root_password }}"
+
+- name: Create application database user
+  ansible.mysql.mysql_user:
+    name: admin
+    password: "{{ mariadb_app_password }}"
+    priv: "accounts.*:ALL"
+    host: "%"
+    state: present
+    login_user: root
+    login_password: "{{ mariadb_root_password }}"
