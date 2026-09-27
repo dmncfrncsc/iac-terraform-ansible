@@ -1,0 +1,8 @@
+* text=auto
+
+*.tf text
+*.tfvars text
+*.yml text
+*.yaml text
+*.md text
+*.sh text eol=lf
