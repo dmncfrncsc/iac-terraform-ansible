@@ -244,7 +244,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 - [x] Clean Conventional Commit history — 3 commits this session (`f096304`, `ef2e2b7`, `90b1179`), amend used once to correct an inaccurate message before pushing.
 - [x] No secrets committed.
-- [ ] Final repository hygiene/cleanup checkpoint completed — deferred to project end (includes the `ec2.tf` CRLF normalization).
+- [x] Final repository hygiene/cleanup checkpoint completed — .gitattributes added (4257d05), .gitignore completeness fold-in, closing commit (0f24e16).
 
 ## Next Step
 
