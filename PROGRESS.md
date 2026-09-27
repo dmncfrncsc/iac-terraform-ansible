@@ -28,7 +28,7 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **Phase 5 — Ansible execution & idempotency: COMPLETE.** A full second run across all 4 hosts returned `changed=0, failed=0` for every host (`mariadb01` and `rabbitmq01` each with one correctly-skipped task). Getting there required finding and fixing three real idempotency bugs this session — see Key Decisions and Known Issues.
 
-**Phase 6 — Reproducibility & Documentation: IN PROGRESS.** Full `terraform destroy` (35 destroyed) → `terraform apply` (35 added) cycle completed successfully from a blank state — including repeating the RabbitMQ temporary-NAT-Gateway bootstrap (confirmed necessary again, same as Session 14; NAT resources added, used, destroyed, and removed from code, `terraform plan` confirmed `No changes` afterward). The subsequent backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) is **RESOLVED** — root cause was three hardcoded Route 53 A records (`db01`/`mc01`/`rmq01`) that still pointed at the *previous* rebuild's private IPs; a fresh instance doesn't reuse its old IP, so DNS was silently stale. Fixed by referencing `aws_instance.<name>.private_ip` instead of literal strings, verified via `terraform plan` (3 changed, 0 added/destroyed), `apply`, and live TCP reachability tests from `tomcat01` (all 3 ports succeed). Commit `e6af0b3`. Remaining Phase 6 work: idempotency re-run, then documentation + final hygiene checkpoint.
+**Phase 6 — Reproducibility & Documentation: IN PROGRESS.** Full `terraform destroy` (35 destroyed) → `terraform apply` (35 added) cycle completed successfully from a blank state — including repeating the RabbitMQ temporary-NAT-Gateway bootstrap (confirmed necessary again, same as Session 14; NAT resources added, used, destroyed, and removed from code, `terraform plan` confirmed `No changes` afterward). The subsequent backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) is **RESOLVED** — root cause was three hardcoded Route 53 A records (`db01`/`mc01`/`rmq01`) that still pointed at the *previous* rebuild's private IPs; a fresh instance doesn't reuse its old IP, so DNS was silently stale. Fixed by referencing `aws_instance.<name>.private_ip` instead of literal strings, verified via `terraform plan` (3 changed, 0 added/destroyed), `apply`, and live TCP reachability tests from `tomcat01` (all 3 ports succeed). Commit `e6af0b3`. A full second playbook run across all 4 hosts post-fix confirmed `changed=0, failed=0` on every host (`mariadb01`/`rabbitmq01` each with the expected 1 skip, same guarded tasks as Session 18) — idempotency holds on a genuinely rebuilt environment, not just the original. Remaining Phase 6 work: `README.md` + `docs/architecture.md` + `docs/decisions.md` + `docs/incidents.md` + `docs/course-coverage.md`, then the final repository hygiene checkpoint.
 
 ## Project Baseline
 
@@ -119,6 +119,10 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
   - Route 53 + DHCP option set Terraform additions committed (`ef2e2b7`).
   - `tomcat` role reconciled to install `tomcat10` (matching the verified manual fix), plus new tasks rendering `application.properties` from a Jinja2 template with real `jdbc.password`/`rabbitmq.password` values fetched from Secrets Manager — committed together (`90b1179`), verified via a scoped `--limit tomcat01` playbook run (`changed=2`, `failed=0`), `systemctl is-active` → `active`, `curl` → `200`, and the rendered file's real password confirmed via an `ansible ... -b` (`--become`) ad-hoc read.
   - `terraform/ec2.tf`'s apparent diff identified as a harmless CRLF artifact, deliberately left uncommitted.
+- **This session (Session 20):**
+  - Root-caused post-rebuild backend connectivity failure to 3 hardcoded Route 53 A records; fixed by referencing `aws_instance.<name>.private_ip`, verified via `terraform plan`/`apply` and live TCP checks, committed and pushed (`e6af0b3`).
+  - Full second playbook run across all 4 hosts post-fix: `changed=0, failed=0` confirmed, closing out the Phase 6 reproducibility test.
+  - `PROGRESS.md`/`NOTES.md` updated to reflect both (`8749a04`).
 
 ## Implementation Phases
 
@@ -223,7 +227,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 - [x] All four services healthy — Tomcat 10 running, VProfile app returns HTTP 200, real credentials confirmed rendered.
 - [x] Application reachable from Tomcat host — `curl http://localhost:8080/vprofile/` returns `200`.
 - [x] Browser-level application evidence — captured at `docs/images/vprofile-login-page.png`, verified via SSM port forwarding to `localhost:8080/vprofile/`.
-- [ ] Destroy → recreate → verify reproducibility test completed.
+- [x] Destroy → recreate → verify reproducibility test completed — full destroy/apply cycle, DNS root-cause fix, and post-fix idempotency re-run (`changed=0, failed=0` all 4 hosts) all verified this session.
 
 ### Documentation
 
@@ -242,13 +246,18 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ## Next Step
 
-### Resume here — Phase 6 idempotency re-run
+### Resume here — Phase 6 documentation
 
-Backend connectivity is fixed and verified (see Known Issues). Next:
+Idempotency re-run confirmed (`changed=0, failed=0`, all 4 hosts). The reproducibility test is fully closed out. Remaining Phase 6 work is documentation + final hygiene, in this order:
 
-1. Run a full second playbook pass across all 4 hosts (`ansible-playbook -i inventory/hosts.yml playbook.yml`) — expect `changed=0, failed=0` on all 4, same bar as Session 18's pre-rebuild idempotency run.
-2. If anything reports `changed`, treat it the same way Session 18 did: read the actual task, don't assume — determine whether it's a real bug or an expected one-time reconciliation (e.g. DNS records now correctly matching, so no further changes expected there).
-3. Once idempotency is confirmed, move to `README.md` + `docs/architecture.md` + `docs/decisions.md` + `docs/incidents.md` + `docs/course-coverage.md`, then the final repository hygiene checkpoint (includes the still-deferred `ec2.tf` CRLF normalization).
+1. `README.md` — project overview, architecture, tech stack + rationale, setup/usage, testing, deployment, security notes, troubleshooting, cleanup, lessons learned, limitations, what would change for real production.
+2. `docs/architecture.md` — Mermaid diagram of what's actually built (VPC, subnets, 4 EC2 instances, SGs, Route 53 private zone, S3 Gateway endpoint) — no aspirational/unbuilt components.
+3. `docs/decisions.md` — ADR-lite entries for the meaningful decisions made across this project (Terraform+Ansible split, SSM connectivity, temporary NAT Gateway pattern, templated `application.properties`, Route 53 + DHCP option set, dynamic vs. hardcoded DNS records).
+4. `docs/incidents.md` — real incidents from this project, using the fields this project's rules define (symptoms/impact, diagnostic evidence, root cause, fix + verification, prevention). At minimum: the Tomcat Jakarta/Servlet 404, the post-rebuild hardcoded-DNS connectivity failure, and the 3 idempotency bugs.
+5. `docs/course-coverage.md` — Course Topic → Project → Implementation → Evidence matrix for Project 2.
+6. Final repository hygiene checkpoint — includes the still-deferred `ec2.tf` CRLF normalization, plus the general cleanup checklist (accidental files, duplicates, `.gitignore`, clean git status), closed with one `chore:` commit.
+
+**Resource Reference table note:** the table further down this file (under "Resource Reference") still holds the *pre-rebuild* IDs/IPs from before Session 19's destroy/recreate. The "New resource IDs from this rebuild" block above is currently the accurate one. When starting the documentation work, rewrite the main Resource Reference table from the rebuild block's values and remove the "supersedes" note, so there's one clean source of truth instead of two tables.
 
 **New resource IDs from this rebuild (for reference during debugging — supersede the old Resource Reference table below until Phase 6 is fully done and that table is rewritten):**
 - VPC: `vpc-08bd435f56891523a`
