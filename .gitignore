@@ -17,3 +17,7 @@ vault_pass.txt
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
