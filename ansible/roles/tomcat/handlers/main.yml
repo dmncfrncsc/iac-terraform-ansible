@@ -1,5 +1,5 @@
 ---
 - name: Restart Tomcat
   ansible.builtin.service:
-    name: tomcat9
+    name: tomcat10
     state: restarted

@@ -13,19 +13,44 @@
 
 - name: Install Tomcat
   ansible.builtin.dnf:
-    name: tomcat9
+    name: tomcat10
     state: present
 
 - name: Download vprofile application WAR file from S3
   amazon.aws.s3_object:
     bucket: vprofile-artifacts-747336059892
     object: app/vprofile-v2.war
-    dest: /usr/share/tomcat9/webapps/vprofile.war
+    dest: /usr/share/tomcat10/webapps/vprofile.war
     mode: get
   notify: Restart Tomcat
 
 - name: Start and enable Tomcat service
   ansible.builtin.service:
-    name: tomcat9
+    name: tomcat10
     state: started
     enabled: true
+
+- name: Wait for Tomcat to auto-deploy the exploded WAR directory
+  ansible.builtin.wait_for:
+    path: /usr/share/tomcat10/webapps/vprofile/WEB-INF/classes
+    state: present
+    timeout: 60
+
+- name: Retrieve MariaDB application user password from Secrets Manager
+  ansible.builtin.set_fact:
+    mariadb_app_password: "{{ lookup('amazon.aws.secretsmanager_secret', 'vprofile/db/app-password', region='us-east-1') }}"
+  no_log: true
+
+- name: Retrieve RabbitMQ test user password from Secrets Manager
+  ansible.builtin.set_fact:
+    rabbitmq_test_password: "{{ lookup('amazon.aws.secretsmanager_secret', 'vprofile/rmq/test-password', region='us-east-1') }}"
+  no_log: true
+
+- name: Deploy application.properties with real backend credentials
+  ansible.builtin.template:
+    src: application.properties.j2
+    dest: /usr/share/tomcat10/webapps/vprofile/WEB-INF/classes/application.properties
+    owner: tomcat
+    group: tomcat
+    mode: '0640'
+  notify: Restart Tomcat
