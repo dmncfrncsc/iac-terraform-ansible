@@ -145,3 +145,53 @@ resource "aws_route_table_association" "private_1a" {
   subnet_id      = aws_subnet.private_1a.id
   route_table_id = aws_route_table.private.id
 }
+
+# Private DNS for internal service resolution (Route 53 private hosted zone)
+# Matches course lecture "DNS Route 53" — avoids hardcoding IPs into the app,
+# so instance recreation only requires a DNS record update, not a source change.
+resource "aws_route53_zone" "internal" {
+  name = "vprofile.internal"
+
+  vpc {
+    vpc_id = aws_vpc.main.id
+  }
+}
+
+resource "aws_route53_record" "db01" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "db01.vprofile.internal"
+  type    = "A"
+  ttl     = 300
+  records = ["172.20.3.56"]
+}
+
+resource "aws_route53_record" "mc01" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "mc01.vprofile.internal"
+  type    = "A"
+  ttl     = 300
+  records = ["172.20.3.237"]
+}
+
+resource "aws_route53_record" "rmq01" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "rmq01.vprofile.internal"
+  type    = "A"
+  ttl     = 300
+  records = ["172.20.3.106"]
+}
+
+resource "aws_vpc_dhcp_options" "main" {
+  domain_name         = "vprofile.internal"
+  domain_name_servers = ["AmazonProvidedDNS"]
+
+  tags = {
+    Name    = "vprofile-dhcp-options"
+    Project = "iac-terraform-ansible"
+  }
+}
+
+resource "aws_vpc_dhcp_options_association" "main" {
+  vpc_id          = aws_vpc.main.id
+  dhcp_options_id = aws_vpc_dhcp_options.main.id
+}
