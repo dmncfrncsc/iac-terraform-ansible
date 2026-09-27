@@ -28,7 +28,7 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **Phase 5 — Ansible execution & idempotency: COMPLETE.** A full second run across all 4 hosts returned `changed=0, failed=0` for every host (`mariadb01` and `rabbitmq01` each with one correctly-skipped task). Getting there required finding and fixing three real idempotency bugs this session — see Key Decisions and Known Issues.
 
-**Phase 6 — Reproducibility & Documentation: IN PROGRESS.** Full `terraform destroy` (35 destroyed) → `terraform apply` (35 added) cycle completed successfully from a blank state — including repeating the RabbitMQ temporary-NAT-Gateway bootstrap (confirmed necessary again, same as Session 14; NAT resources added, used, destroyed, and removed from code, `terraform plan` confirmed `No changes` afterward). The subsequent backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) is **RESOLVED** — root cause was three hardcoded Route 53 A records (`db01`/`mc01`/`rmq01`) that still pointed at the *previous* rebuild's private IPs; a fresh instance doesn't reuse its old IP, so DNS was silently stale. Fixed by referencing `aws_instance.<name>.private_ip` instead of literal strings, verified via `terraform plan` (3 changed, 0 added/destroyed), `apply`, and live TCP reachability tests from `tomcat01` (all 3 ports succeed). Commit `e6af0b3`. A full second playbook run across all 4 hosts post-fix confirmed `changed=0, failed=0` on every host (`mariadb01`/`rabbitmq01` each with the expected 1 skip, same guarded tasks as Session 18) — idempotency holds on a genuinely rebuilt environment, not just the original. Remaining Phase 6 work: `README.md` + `docs/architecture.md` + `docs/decisions.md` + `docs/incidents.md` + `docs/course-coverage.md`, then the final repository hygiene checkpoint.
+**Phase 6 — Reproducibility & Documentation: IN PROGRESS.** Full `terraform destroy` (35 destroyed) → `terraform apply` (35 added) cycle completed successfully from a blank state — including repeating the RabbitMQ temporary-NAT-Gateway bootstrap (confirmed necessary again, same as Session 14; NAT resources added, used, destroyed, and removed from code, `terraform plan` confirmed `No changes` afterward). The subsequent backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) is **RESOLVED** — root cause was three hardcoded Route 53 A records (`db01`/`mc01`/`rmq01`) that still pointed at the *previous* rebuild's private IPs; a fresh instance doesn't reuse its old IP, so DNS was silently stale. Fixed by referencing `aws_instance.<name>.private_ip` instead of literal strings, verified via `terraform plan` (3 changed, 0 added/destroyed), `apply`, and live TCP reachability tests from `tomcat01` (all 3 ports succeed). Commit `e6af0b3`. A full second playbook run across all 4 hosts post-fix confirmed `changed=0, failed=0` on every host (`mariadb01`/`rabbitmq01` each with the expected 1 skip, same guarded tasks as Session 18) — idempotency holds on a genuinely rebuilt environment, not just the original. The `README.md` has now been drafted from the verified project state and adopted by the user. Remaining Phase 6 work: refresh the stale Resource Reference table from the latest rebuild values, create `docs/architecture.md`, `docs/decisions.md`, `docs/incidents.md`, and `docs/course-coverage.md`, then complete the final repository hygiene checkpoint.
 
 ## Project Baseline
 
@@ -123,6 +123,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
   - Root-caused post-rebuild backend connectivity failure to 3 hardcoded Route 53 A records; fixed by referencing `aws_instance.<name>.private_ip`, verified via `terraform plan`/`apply` and live TCP checks, committed and pushed (`e6af0b3`).
   - Full second playbook run across all 4 hosts post-fix: `changed=0, failed=0` confirmed, closing out the Phase 6 reproducibility test.
   - `PROGRESS.md`/`NOTES.md` updated to reflect both (`8749a04`).
+- README.md drafted from the verified project state, cross-referenced against the project notes and master prompt, and adopted by the user.
 
 ## Implementation Phases
 
@@ -133,7 +134,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 | Phase 3 | Terraform apply & verification | Infrastructure created, state verified | COMPLETE |
 | Phase 4 | Ansible roles | Roles for all 4 services | **COMPLETE** — all 4 verified running; Tomcat 404 and credential-mismatch both fixed and verified |
 | Phase 5 | Ansible execution & idempotency | Successful run + zero-change second run | **COMPLETE** — full 4-host second run verified `changed=0, failed=0`, three idempotency bugs found and fixed this session |
-| Phase 6 | Reproducibility & documentation | Destroy → recreate → verify, README, docs | Not started |
+| Phase 6 | Reproducibility & documentation | Destroy → recreate → verify, README, supporting docs | **IN PROGRESS** — reproducibility and README complete; supporting docs and final hygiene remain |
 
 ## Resource Reference
 
@@ -231,7 +232,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ### Documentation
 
-- [ ] `README.md`
+- [x] `README.md` — drafted from verified project state and adopted by the user.
 - [ ] `architecture.md`
 - [ ] `decisions.md`
 - [ ] `incidents.md`
@@ -250,7 +251,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 Idempotency re-run confirmed (`changed=0, failed=0`, all 4 hosts). The reproducibility test is fully closed out. Remaining Phase 6 work is documentation + final hygiene, in this order:
 
-1. `README.md` — project overview, architecture, tech stack + rationale, setup/usage, testing, deployment, security notes, troubleshooting, cleanup, lessons learned, limitations, what would change for real production.
+1. Refresh the stale Resource Reference table from the latest rebuild values below and remove the duplicate superseded-values block once the table is current.
 2. `docs/architecture.md` — Mermaid diagram of what's actually built (VPC, subnets, 4 EC2 instances, SGs, Route 53 private zone, S3 Gateway endpoint) — no aspirational/unbuilt components.
 3. `docs/decisions.md` — ADR-lite entries for the meaningful decisions made across this project (Terraform+Ansible split, SSM connectivity, temporary NAT Gateway pattern, templated `application.properties`, Route 53 + DHCP option set, dynamic vs. hardcoded DNS records).
 4. `docs/incidents.md` — real incidents from this project, using the fields this project's rules define (symptoms/impact, diagnostic evidence, root cause, fix + verification, prevention). At minimum: the Tomcat Jakarta/Servlet 404, the post-rebuild hardcoded-DNS connectivity failure, and the 3 idempotency bugs.
@@ -271,3 +272,4 @@ Idempotency re-run confirmed (`changed=0, failed=0`, all 4 hosts). The reproduci
 - Route 53 zone: `Z07956241HBR3FVYWP3CB`, DHCP options: `dopt-0d69face8dc93db76`
 
 **Cost note:** All 4 instances `running`, Route 53 zone live (~$0.50/month). NAT Gateway/EIP already destroyed and removed from code this session — nothing extra billing beyond the normal 4-instance baseline. Re-verify instance state at next session start regardless (has drifted before).
+
