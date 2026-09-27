@@ -34,7 +34,7 @@
 
 - name: Retrieve RabbitMQ test user password from Secrets Manager
   ansible.builtin.set_fact:
-    rabbitmq_test_password: "{{ lookup('community.aws.secretsmanager_secret', 'vprofile/rmq/test-password') }}"
+    rabbitmq_test_password: "{{ lookup('amazon.aws.secretsmanager_secret', 'vprofile/rmq/test-password') }}"
   no_log: true
 
 - name: Create RabbitMQ test admin user

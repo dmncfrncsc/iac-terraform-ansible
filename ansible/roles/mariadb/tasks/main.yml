@@ -7,12 +7,12 @@
 
 - name: Retrieve MariaDB root password from Secrets Manager
   ansible.builtin.set_fact:
-    mariadb_root_password: "{{ lookup('community.aws.secretsmanager_secret', 'vprofile/db/admin-password', region='us-east-1') }}"
+    mariadb_root_password: "{{ lookup('amazon.aws.secretsmanager_secret', 'vprofile/db/admin-password', region='us-east-1') }}"
   no_log: true
 
 - name: Retrieve MariaDB application user password from Secrets Manager
   ansible.builtin.set_fact:
-    mariadb_app_password: "{{ lookup('community.aws.secretsmanager_secret', 'vprofile/db/app-password', region='us-east-1') }}"
+    mariadb_app_password: "{{ lookup('amazon.aws.secretsmanager_secret', 'vprofile/db/app-password', region='us-east-1') }}"
   no_log: true
 
 - name: Install MariaDB server
@@ -25,6 +25,23 @@
     name: mariadb
     state: started
     enabled: true
+
+- name: Install pip
+  ansible.builtin.dnf:
+    name: python3-pip
+    state: present
+
+- name: Download PyMySQL wheel from S3
+  amazon.aws.s3_object:
+    bucket: vprofile-artifacts-747336059892
+    object: deps/pymysql-1.2.3-py3-none-any.whl
+    dest: /tmp/pymysql-1.2.3-py3-none-any.whl
+    mode: get
+
+- name: Install PyMySQL driver from local wheel
+  ansible.builtin.pip:
+    name: /tmp/pymysql-1.2.3-py3-none-any.whl
+    executable: pip3
 
 - name: Set MariaDB root password
   ansible.mysql.mysql_user:
