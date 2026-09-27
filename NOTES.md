@@ -507,3 +507,166 @@ to show `PingStatus: Online` before retrying Ansible.
 **`community.rabbitmq.rabbitmq_user` maps directly, one parameter at a time, onto the exact `rabbitmqctl` commands Project 1 ran manually** — `user`/`password`/`state` ↔ `add_user`; `tags` ↔ `set_user_tags`; `vhost`+`configure_priv`/`write_priv`/`read_priv` ↔ `set_permissions`. Same permission model Project 1 used (full admin rights on default vhost `/`) — a trade-off Project 1 already named as "not least-privilege, acceptable for a portfolio-scale single-app broker," carried forward here rather than re-decided.
 
 **Teaching-preference note for continuity (not a technical lesson, but worth recording):** this session, explanations shifted to a more literal, non-metaphor, line-by-line style at the student's explicit request — including breaking down individual YAML lines one at a time, and always stating "why this choice, not the alternative, and is it best practice / interview-relevant" for meaningful decisions. This preference should carry forward as the default teaching style for the rest of this project, not just this session.
+
+## Session 13 — 2026-09-24 — Ansible Roles Finished, First Real Deployment Debugging
+
+**A role with nothing to `notify` doesn't need a `handlers/` folder** — `rabbitmq`'s tasks never modify a config file, so nothing ever triggers a restart-on-change. Adding an unused handler file would just be dead code.
+
+*This project:* `rabbitmq` role has only `tasks/`, unlike `mariadb`/`memcached`/`tomcat`, all of which do edit a file the running service depends on.
+
+**Amazon Linux 2023 doesn't ship a package literally named after the software** — it ships versioned packages instead (`tomcat9`, `tomcat10`, `tomcat11`), so `dnf install tomcat` fails with "No package tomcat available" even though Tomcat genuinely is packaged for AL2023.
+
+*This project:* confirmed via `dnf list --available 'tomcat*'` directly on the instance rather than guessed from generic docs.
+
+**Tomcat 10+ made a breaking namespace change — `javax.servlet` → `jakarta.servlet`** — older WAR files built against the pre-10 API don't error loudly on Tomcat 10/11; the server starts fine, but the app is never recognized, producing endless 404s with no obvious cause.
+
+*This project:* `vprofile-v2.war` is a legacy-style app, so **Tomcat 9** is the only one of the three available AL2023 packages with a real chance of working — a real requirements-to-architecture decision, not a style pick, reasoned through directly rather than told upfront.
+
+**`CATALINA_HOME` vs `CATALINA_BASE`, and why guessing an install path is risky** — RPM-packaged Tomcat can create more than one folder that *looks* like the webapps directory (`/usr/share/tomcat9/webapps` and `/var/lib/tomcat9/webapps` both existed). Only one is the one the running service actually uses, determined by `CATALINA_BASE` if set, falling back to `CATALINA_HOME` if not.
+
+*This project:* confirmed the real path by reading `/etc/tomcat9/tomcat9.conf` directly (`CATALINA_HOME="/usr/share/tomcat9"`, no `CATALINA_BASE` override) rather than assuming from generic Tomcat tutorials, which often describe a different (Debian-style) packaging layout that doesn't match AL2023's.
+
+**`community.mysql` collection has been renamed to `ansible.mysql`** — the old module names (`community.mysql.mysql_user`, `mysql_db`) still work today only as redirects, and will be removed entirely in a future collection version.
+
+*This project:* confirmed both collections were already installed (`ansible-galaxy collection list`) before switching all 3 FQCNs in the `mariadb` role.
+
+**Reusing one password across a superuser account and a limited-purpose app account defeats least privilege, even if it "works"** — the `admin` MariaDB user was created using the same secret as MariaDB's own root password. A leak of the app's one credential (from a log, a config file, a compromised instance) would hand over full root access, not just access to the one database the app actually needs.
+
+*This project:* fixed by creating a dedicated `vprofile/db/app-password` secret via AWS Secrets Manager and updating the role to fetch/use it only for the `admin` user — root's password stays separate and untouched.
+
+**AWS CLI's `create-secret` has no `--generate-secret-string` flag** — despite it sounding plausible and matching a real console UI feature, the actual API/CLI splits this into two separate steps: `get-random-password` (generates a value) and `create-secret --secret-string` (stores it). Confirmed via the official CLI docs after the invented flag failed identically across multiple retries (different quoting, different line formatting) — a reminder that a persistent identical error across several fix attempts is itself a signal the assumed command/flag might not exist at all, not that the syntax needs more tweaking.
+
+*This project:* generated the password into a shell variable (`SECRET_PW=$(...)`) so the actual value was never displayed or typed manually, then passed it to `create-secret`, then `unset` the variable afterward.
+
+**Ansible *lookups* run on the control node; Ansible *modules* run on the target host — different Python environments entirely** — a lookup like `secretsmanager_secret` executes using the control node's own Python (WSL's pipx-isolated Ansible install, already has boto3/botocore since Session 11). A module like `amazon.aws.s3_object` copies its code to the **remote EC2 instance** and runs there, using *that machine's* Python — which had no boto3/botocore installed at all, and not even `pip` itself.
+
+*This project:* this distinction wasn't documented anywhere Session 11 covered, and only surfaced because `secretsmanager_secret` (a lookup) had already worked fine in both `mariadb` and `rabbitmq`, making the `s3_object` (a module) failure genuinely confusing at first. Fixed by adding a `python3-boto3`/`python3-botocore` install task (via `dnf`, not `pip`, since `pip` wasn't even present) to both `tomcat` and `mariadb` — each EC2 instance needs this independently; fixing one instance does nothing for another.
+
+**`HeadBucket`'s permission gate is `s3:ListBucket`, not something more obviously named** — a module checking "does this bucket exist and can I see it" before reading a file calls the S3 `HeadBucket` API action underneath, which AWS's IAM system gates behind the `s3:ListBucket` permission — not `s3:GetObject` (that only covers reading a file's actual contents) and not some more literally-named "HeadBucket" permission.
+
+**S3 IAM permissions use two different ARN shapes for two different scopes** — `s3:ListBucket` (a bucket-existence/listing action) applies to the bucket itself: `arn:aws:s3:::bucket-name` (no `/*`). `s3:GetObject` (reading a file's contents) applies to objects inside the bucket: `arn:aws:s3:::bucket-name/*` (with `/*`). Using the wrong shape for either action, or granting only one of the two actions, produces the same generic `403 Forbidden`.
+
+*This project:* the EC2 role had neither action at all (confirmed via `aws iam list-attached-role-policies`/`list-role-policies` before writing any fix) — new `s3_artifacts_access` inline policy grants both, scoped only to `vprofile-artifacts-747336059892`, following the same least-privilege shape as the existing `secrets_access` policy rather than a broad `s3:*`.
+
+**Each OS environment needs its own Git identity and credentials too, not just its own tool installs** — same underlying lesson as Session 11's separate-AWS-CLI-per-environment finding, now hit again with Git: WSL2/Ubuntu's Git had never been configured with a username/email or GitHub auth, since Git Bash (a completely separate environment) already had both and every prior commit/push had gone through there.
+
+*This project:* rather than configure a second Git identity inside WSL, adopted a deliberate split going forward — all `git` commands run in Git Bash; WSL2 is reserved for Ansible only. Also: pasting multiple commands as one block while an earlier command in that block is still hanging on an interactive prompt causes the later lines to be silently fed into that prompt as answers — explains the garbled `Username for 'https://github.com': cd ansible` output seen when this happened.
+
+## Session 14 — 2026-09-27 — Four Services Working, One Open Gap
+
+**Two different Python plugin *kinds* can share an identical dotted name across collections, and only one of them is what you asked for** — `community.aws.secretsmanager_secret` genuinely exists, but as a *module* (create/update/delete a secret), not a *lookup plugin* (read an existing secret's value). Calling it with `lookup(...)` fails with "plugin not found," which sounds like a missing collection but actually means "wrong collection for this specific plugin type." The real lookup plugin is `amazon.aws.secretsmanager_secret`.
+
+*This project:* fixed in 3 places across `mariadb` (2) and `rabbitmq` (1) — same one-line namespace swap each time.
+
+**`grep` exits 1 when it finds zero matches — and Ansible's `shell` module treats any non-zero exit as a task failure by default.** A "command failed" error from an ad-hoc `shell` task wrapping `grep` can just mean "grep found nothing," not "the command itself is broken."
+
+*This project:* `dnf list --available | grep -i pymysql` came back as a task failure — the real information was that grep found zero matches, meaning no PyMySQL package exists under that name at all, not that the search command was wrong.
+
+**When a Python dependency isn't available via the OS package manager, and the target has no internet route, host the wheel yourself instead of trying to reach PyPI.** A pure-Python package (no C extensions) produces a `py3-none-any` wheel — meaning one file works across any Python 3.x, any OS, any CPU architecture. Download it once from a machine with real internet access, upload it to a bucket the target can already reach (here, the same artifacts bucket already used for the WAR and schema files), then have Ansible fetch-and-install from that local copy instead of the internet.
+
+*This project:* `pymysql-1.2.3-py3-none-any.whl`, downloaded from WSL, uploaded to a new `deps/` prefix in `vprofile-artifacts-747336059892`, fetched via the same `amazon.aws.s3_object` module already used for the WAR/schema, then `pip install`'d from the local file path — `pip` never contacts an index at all when given an exact file, so no internet route is needed for the install itself.
+
+**A temporary NAT Gateway is a legitimate, narrowly-scoped tool — not a workaround — for a one-time install with a real multi-package dependency chain that a single hosted file can't substitute for.** The distinguishing question isn't "is this the field's default" (a NAT Gateway usually is the default for general internet access) — it's whether the *specific* need is a single small file (S3-wheel fits) or a live dependency-resolution process against an upstream repo (`dnf` resolving Erlang + RabbitMQ + whatever they pull in — S3-wheel doesn't fit; you'd have to hand-compute the whole closure).
+
+*This project:* created `aws_eip.nat` + `aws_nat_gateway.main` + `aws_route.private_internet_temp` in `main.tf`, applied, ran the playbook once against `rabbitmq01` only, confirmed success, then destroyed all 3 immediately via `terraform destroy -target=...` — never left standing.
+
+**`-target` scoped destroy leaves dead code behind unless you remove it — and that dead code is a real accidental-recreation risk, not just clutter.** Destroying resources with `-target` doesn't touch the `.tf` file that declares them. A later `terraform apply` for something completely unrelated would see the code still describing those 3 resources, find they don't exist in state, and recreate them — silently reintroducing the exact temporary infrastructure you just tore down, for an unrelated change.
+
+*This project:* deleted the 29 lines from `main.tf` in the same session as the destroy, then ran a plain `terraform plan` and confirmed `No changes` — proof the code and live state agree, closing the loop completely rather than leaving a landmine for a future session.
+
+**A task reporting `ok` with zero `changed` on what looks like a "first ever" run isn't automatically suspicious — check *when* the underlying state was actually created, not just the run count in your own head.** `tomcat01`'s WAR deployment showed `changed=0` on every run this session, which looked like a possible silent failure. The real explanation: the WAR was successfully deployed several days earlier (the session the S3 IAM policy was first applied), and every playbook run since then correctly found it already present and reported `ok` without `changed` — that's idempotency working as designed, confirmed by checking the actual file timestamp on the instance rather than assuming from the recap alone.
+
+**Command-line evidence and "is the app actually working" are two different questions, and closing the gap between them is where a real bug was found.** `ls` showing the WAR file present, and `systemctl is-active` showing the service running, both looked like success — but neither actually tests whether the deployed application responds to a real request. A direct `curl` to the app's expected URL returned `404`, surfacing a genuine unresolved problem that file-presence and service-status checks alone would have missed entirely. Diagnosis was interrupted at session end — first step next session is finding Tomcat's real log location, since the assumed path from Session 13 (`/var/log/tomcat9/catalina.out`) doesn't exist on this particular install; AL2023's RPM-packaged Tomcat likely logs to `journald` instead.
+
+**Recurring friction, not a new lesson exactly, but worth naming since it happened three times this session:** mixing up which shell you're in (Git Bash vs. WSL) when the prompt itself already shows which one — `terraform: command not found` and `ansible: command not found` are both instant, unambiguous signals of being in the wrong shell, worth checking the prompt for before assuming a tool is broken or missing.
+
+## Session 15 — 2026-09-27 — Tomcat Jakarta/Servlet Mismatch, Private Route 53 DNS
+
+**A container "failing to start a listener" can mean the listener's *class* never loaded, not that its logic threw an error** — `NoClassDefFoundError` fires when the JVM can't even find a class byte-for-byte, distinct from an exception thrown by code that did run. Tomcat 9's `SEVERE ... listeners failed to start` pointed here, not to a DB/network problem as first assumed.
+
+*This project:* the real trace (`jakarta.servlet.ServletContextListener` not found) was in `localhost.<date>.log`, not `catalina.log` — Tomcat splits container-level events (`catalina.log`) from application-level startup errors (`localhost.log`). Grepping the wrong file, and even grepping the right file in the wrong direction (`-A` instead of `-B` around the summary line), delayed finding it.
+
+**`javax.*` vs. `jakarta.*` is a real, hard compatibility boundary, not a cosmetic rename** — Tomcat 9 and earlier only ever provide `javax.servlet.*` classes to a deployed app; Tomcat 10+ only provide `jakarta.servlet.*`. A WAR built against one will never satisfy the other, regardless of the app's apparent "vintage."
+
+*This project:* assumed in Session 13 that `vprofile.war` needed `javax` because it's a legacy-style reference app — never actually checked what was bundled inside it. It shipped `spring-web-6.0.11.jar`, a Jakarta-namespace artifact, contradicting that assumption. **Lesson: verify a WAR's actual bundled dependencies before choosing a container version, don't infer from the app's reputation.**
+
+**Spring Framework's major version caps which Jakarta EE generation it supports — not just "does it use jakarta or javax."** Spring 6.0.x supports Jakarta EE 9–10 (Servlet 5.0–6.0) only, confirmed via Spring's own release documentation. Tomcat 10.1.x implements Servlet 6.0 (fits); Tomcat 11 implements Servlet 6.1/Jakarta EE 11 (does not fit Spring 6.0.x's stated range).
+
+*This project:* this ruled out Tomcat 11 even though it also uses the `jakarta` namespace — "same namespace family" isn't sufficient; the specific spec version has to be checked too. Verified via official Tomcat and Spring documentation before switching, not assumed.
+
+**A package removal (`dnf remove`) only removes what the package manager itself put there — files an external tool (Ansible, S3 download) placed outside package management survive.**
+
+*This project:* `dnf remove tomcat9` deleted the package's own files, but `/var/lib/tomcat9/webapps/vprofile.war` (placed there by Ansible's `s3_object` task, not by the RPM) was untouched — meaning the already-downloaded WAR could just be copied to the new `tomcat10` webapps path instead of re-fetched from S3.
+
+**Command chaining with `;` can hide a real failure inside an apparent one — `systemctl status` returning non-zero on a freshly-installed, not-yet-started service is not evidence anything actually broke**, same class of false alarm as `grep` exiting 1 on zero matches (Session 14). Ansible's `shell` module reports the whole chained command as `FAILED` based on the *last* command's exit code, even when every real step before it succeeded.
+
+*This project:* a chained `dnf remove; dnf install; systemctl status` reported `FAILED`, but reading the actual output showed both package operations completed cleanly — the `status` check alone tripped the non-zero-exit label because the service was simply `inactive (dead)` before ever being started.
+
+**"The Ansible role completed successfully" and "the app can actually reach that backend service" are two different claims — verified separately, not implied by each other.** A role can finish (install package, create user, start service) entirely independently of whether the *deployed application* can ever successfully talk to it.
+
+*This project:* `mariadb01`/`memcached01`/`rabbitmq01` all completed clean Ansible runs in Session 14, and this got recorded as those services "working" — but the actual app (`vprofile.war`) never once successfully connected to any of them, because all three are addressed by short hostnames (`db01`, `mc01`, `rmq01`) that had no DNS resolution anywhere in the project until this session. The 404 bug happening to block Tomcat *before* it reached that code path is the only reason this gap stayed hidden through Session 14.
+
+**Course-fidelity check applies to me too, not just the student** — the master prompt (v3.3) already required checking the course curriculum before presenting a design decision as a generic best-practice-vs-simplicity tradeoff, and this session's first pass at the DNS-resolution fix skipped that check, defaulting straight to a generic "simpler" answer (`/etc/hosts`) that turned out to contradict the course's own dedicated "DNS Route 53" lecture.
+
+*This project:* corrected only because the student happened to remember the lecture existed — a reminder that the rule needs to actually be applied at decision time, not just exist in the prompt.
+
+**A private Route 53 hosted zone is VPC-scoped internal DNS, not the same feature as a public hosted zone for a real domain name** — created via a `vpc` block inside `aws_route53_zone` instead of leaving it public; records inside it (e.g. `db01.vprofile.internal`) never resolve outside that VPC, by design.
+
+*This project:* `vprofile.internal` chosen as the zone name specifically because `.internal` is conventionally reserved for exactly this non-public use, avoiding any collision risk with a real domain.
+
+
+## Session 16 — 2026-09-27 — DHCP Option Sets and the AL2023 Network Stack
+
+**A Route 53 private zone answering a query is different from an instance knowing to ask that query at all** — a Route 53 zone with correct records doesn't help if nothing ever tells the OS to try the suffix that zone covers. Every VPC hands out DNS behavior via a **DHCP option set**: alongside an IP address, DHCP also delivers which DNS resolver to use and which **search domain** to append when a bare hostname (like `db01`) doesn't resolve on its own.
+
+*This project:* the VPC's default DHCP option set had `domain_name = us-east-1.compute.internal` (AWS's default), not `vprofile.internal`. So `db01` was never even being tried as `db01.vprofile.internal` — the Route 53 zone was correct and irrelevant at the same time.
+
+**Fix: `aws_vpc_dhcp_options` + `aws_vpc_dhcp_options_association`** — create a new option set with the right `domain_name`, then attach it to the VPC. This affects every instance in the VPC, not just one — worth knowing on a shared VPC, though fine here since all 4 instances are ours.
+
+**Amazon Linux 2023 doesn't use `dhclient` or NetworkManager** — it uses `systemd-networkd` (handles the actual DHCP client role) paired with `systemd-resolved` (manages `/etc/resolv.conf` and the search domain). The command to force a lease renewal is `networkctl renew <interface>`, not `dhclient -r && dhclient`. Interface names are `ens5`-style, found via `networkctl list`.
+
+*This project:* three consecutive wrong guesses (`dhclient` missing, then `nmcli` missing) before checking `systemctl list-units | grep network` directly and finding the real running services — a reminder to check what's actually running rather than guessing a third likely tool name.
+
+**Ping (ICMP) failing does not mean the network path is broken — it may just mean the security group is doing its job.** Security groups are protocol-and-port specific. `vprofile-db-sg`/`mc-sg`/`rmq-sg` were built to allow exactly the ports each service needs (3306, 11211, 5672) from `vprofile-app-sg` — never ICMP, since nothing in the architecture needs ping. A failing ping after DNS resolves correctly should be tested against the *real* port before being treated as a bug.
+
+*This project:* `ping db01` resolved correctly (`172.20.3.56`) but showed 100% packet loss; a direct TCP check via `(echo > /dev/tcp/db01/3306)` confirmed the real port was open. Same result confirmed for Memcached (11211) and RabbitMQ (5672).
+
+**A WAR's own bundled `logback.xml` can make the application itself unverifiable through server logs, independent of anything Ansible or Terraform did.** This project's `vprofile.war` ships a `logback.xml` that sets the ROOT logger and `org.springframework`/`org.hibernate`/the app's own package all to `OFF`. This isn't a bug we introduced — it's baked into the artifact — but it means `journalctl` on `tomcat10` will not show Spring's AMQP/RabbitMQ connection activity, success or failure, regardless of what's actually happening.
+
+*This project:* after the DNS fix, we could not find `UnknownHostException` in the logs (good) but also could not find positive confirmation the RabbitMQ listener connected (logging is off). We therefore relied on independent infrastructure-level evidence — DNS resolution confirmed, TCP reachability confirmed on all 3 backend ports, app still returns HTTP 200 — rather than waiting on log output that structurally cannot appear without a temporary logging override (not done this session, listed as optional future work).
+
+**Ansible ad-hoc commands vs. playbooks — a distinction that should have been introduced before first use, not after several were already run.** An ad-hoc command (`ansible <target> -i <inventory> -m <module> -a "<args>"`) is a one-off, throwaway action run directly from the CLI — used for diagnostics, quick fixes, or anything you won't need to repeat identically. A playbook (a `.yml` file executed via `ansible-playbook`) defines repeatable configuration meant to run the same way every time. `-i` names the inventory file (how Ansible knows what `tomcat01` means and how to reach it); `-m` names the module (the unit of built-in functionality, e.g. `ansible.builtin.shell` = "run this raw command"); `-a` supplies that module's arguments (for `shell`, just the command string).
+
+*This project:* every diagnostic command this session (DNS renewal, ping/TCP checks, service restart, journal queries) was an ad-hoc command — none of it is saved anywhere, which is exactly why the `tomcat` role still needs a separate, permanent edit to actually install `tomcat10` going forward.
+
+**`grep` exiting 1 on zero matches can be worked around cleanly with `|| echo 'NO MATCHES FOUND'`** rather than treating the resulting Ansible task failure as a real error each time — turns an ambiguous FAILED result into an unambiguous, readable one.
+
+## Session 17 — 2026-09-27 — Tomcat Role Reconciliation, Credential Templating, Git Hygiene
+
+**Ansible ad-hoc commands run as the SSM session's default user, not `root` or the service account — and permission errors from this are the access control working, not a bug.** `grep`ing a file we'd just set to `mode: 0640, owner: tomcat` failed with `Permission denied` under a plain ad-hoc command, because the command runs as `ssm-user`, which is neither `tomcat` nor a member of its group.
+
+*This project:* confirmed the fix works by re-running with `-b` (`--become`, tells Ansible to run that one command via `sudo` on the target) — a deliberate, one-off privilege escalation for verification, not a standing permission change.
+
+**`wait_for` with a `path` polls for a real condition; a fixed `pause`/`sleep` is a guess.** Tomcat only creates its exploded `webapps/vprofile/` directory a few seconds after service start (auto-deploy), so a task writing into that directory immediately after "start Tomcat" could race it on a slower instance.
+
+*This project:* `ansible.builtin.wait_for: path: .../WEB-INF/classes, state: present, timeout: 60` — checks every second until the directory exists, rather than guessing a delay.
+
+**Tomcat auto-explodes a deployed `.war` into a same-named directory alongside it — and only the exploded copy is what the running server actually reads.** `/usr/share/tomcat10/webapps/` ends up with both `vprofile.war` (the original archive) and `vprofile/` (Tomcat's unpacked copy). Editing the `.war` does nothing at runtime; the exploded directory is the real target for any post-deploy file change.
+
+*This project:* `application.properties` is rendered to `webapps/vprofile/WEB-INF/classes/application.properties`, not into the `.war` file.
+
+**A WAR's baked-in credentials are the reference app's original dev defaults, not a bug to patch in the artifact — the fix is overriding them at deploy time, not editing the file that ships them.** `jdbc.password=admin123` and `rabbitmq.password=test` in `vprofile.war` turned out to be the exact same values Project 1's own `mysql.sh` originally hardcoded, confirmed by reading Project 1's actual `PROGRESS.md` rather than guessing. Project 1's own architecture already solved this by writing a fresh `application.properties` at boot with real fetched secrets — never editing the WAR's compiled-in file.
+
+*This project:* replicated that same pattern via Ansible's `template` module instead of a boot-time shell script — a `.j2` template with the two credential lines parameterized, rendered from `amazon.aws.secretsmanager_secret` lookups, same mechanism already used in the `mariadb`/`rabbitmq` roles.
+
+**`git commit --amend` is safe on a local, unpushed commit — and unsafe (history-rewriting) on one already shared.** A commit's message undersold what it actually contained (staged before a related new file was added). Checking `git status` for "ahead of origin by N commits, not yet pushed" *before* amending is what made it safe — amending a commit already on `origin` would rewrite shared history instead of just correcting a local mistake.
+
+**Git identity is genuinely per-shell-environment, not just per-tool-install — reinforced, not new.** A commit attempt from WSL failed outright (`empty ident name`) because WSL's Git had never been configured, since Session 13 already established all `git` commands run in Git Bash. This wasn't a new lesson so much as a concrete example of why that rule exists — switching shells fixed it in one step, no WSL Git config needed.
+
+**A heredoc-written file can silently mangle one specific character while leaving everything else intact — worth scanning for, not assuming.** the emoji character `���` (a 4-byte "supplementary plane" Unicode character) became a stray `�` byte after a `cat > file << 'EOF'` heredoc in Git Bash's Windows console, while `✅` (a simpler, 2-byte character) on an adjacent line survived fine in the same file. `grep -nP "[\x80-\xFF]"` (match any byte outside plain ASCII), with known-good characters filtered out via `grep -v`, found the one bad spot without having to eyeball the whole file.
+
+*This project:* fixed by replacing the one emoji with plain text (`(CURRENT)`) rather than fighting the terminal encoding — the safer general lesson: prefer simple ASCII/BMP characters in files edited across Windows/WSL/Git Bash boundaries, since emoji-class characters are the ones most likely to break in this pipeline.
+
+**`--limit <host>` scopes one playbook run to a single inventory host without touching the playbook file.** Used to validate the new `tomcat` role changes in isolation before running the full playbook (which would also re-touch `mariadb`/`memcached`/`rabbitmq`, unnecessarily, since nothing in their roles changed).
+
+*This project:* `ansible-playbook -i inventory/hosts.yml playbook.yml --limit tomcat01` — confirmed the actual top-level playbook filename is `playbook.yml`, not the more commonly-seen convention `site.yml` (an assumption that failed on first try).

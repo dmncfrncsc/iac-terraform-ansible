@@ -13,7 +13,7 @@ This is Project 2 of 5 planned portfolio projects.
 Portfolio sequence:
 
 - ✅ Project 1 — `aws-lift-and-shift` (CLOSED)
-- 🟢 Project 2 — `iac-terraform-ansible` (CURRENT)
+- Project 2 — `iac-terraform-ansible` (CURRENT)
 - Project 3 — `cicd-pipeline-vprofile`
 - Project 4 — `aws-paas-migration`
 - Project 5 — `k8s-gitops-vprofile`
@@ -22,21 +22,11 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 ## Current Phase
 
-**Phase 1 — Terraform Foundation: COMPLETE (infrastructure provisioned and verified 2026-09-12)**
+**Phase 1–3 — Terraform Foundation, EC2, Apply & Verification: COMPLETE.**
 
-**Phase 2 & 3 — Terraform EC2 Infrastructure, Apply & Verification: COMPLETE (2026-09-12)**
+**Phase 4 — Ansible Roles: functionally complete and verified.** All 4 roles have completed successful live runs. The `tomcat` role now matches the verified live state (Tomcat 10, correct paths), and the `jdbc.password`/`rabbitmq.password` mismatch is fixed via a templated `application.properties` rendered from real Secrets Manager values at deploy time — replacing the WAR's baked-in `admin123`/`test` defaults, following the same "write real credentials at boot, don't edit compiled defaults" pattern Project 1 used.
 
-**SSM Connectivity — VERIFIED (2026-09-19):** SSM Session Manager confirmed working end-to-end to all 4 instances after resolving an AMI variant issue (see Known Issues). Ansible connectivity decision is now resolved: **SSM** is the confirmed connection method, using the AWS `community.aws` or `aws_ssm` Ansible connection plugin.
-
-**Phase 4 — Ansible Roles: IN PROGRESS (2026-09-22).** Ansible control node and SSM connectivity fully verified. Role-writing underway:
-- `mariadb` role — COMPLETE on disk (tasks, handlers, template written and verified via `cat`). NOT yet tested against a live instance.
-- `memcached` role — COMPLETE on disk (tasks, handlers written and verified via `cat`). NOT yet tested against a live instance.
-- `rabbitmq` role — DESIGNED, NOT YET WRITTEN TO DISK. Full task list worked out (signing keys, yum repo via `loop`, package install, service start/enable, Secrets Manager lookup, `test` user creation) but no `cat >` commands run yet.
-- `tomcat` role — NOT STARTED.
-- Top-level `playbook.yml` — NOT STARTED.
-- Nothing from this phase has been run against real AWS state yet, and nothing from this session's role-writing has been committed to git.
-
-Originally planned as two separate phases (define resources, then apply/verify), but completed together in one continuous session — writing the 4 EC2 instance resources, running `terraform apply` (4 added, 0 changed, 0 destroyed), and verifying against live AWS state all happened without a gap between them, same as how Phase 1 was actually executed. Merged here to reflect actual project history rather than forcing an artificial split. Phase 4 (Ansible roles) requires resolving the Ansible connectivity decision (documented as open in Key Decisions) before role-writing begins.
+**Phase 5 — Ansible execution & idempotency: in progress this session, not yet run.** The scoped `--limit tomcat01` run that applied the credential fix is verified; a full second run across all 4 hosts, checked for `changed=0`, is the immediate next step.
 
 ## Project Baseline
 
@@ -50,7 +40,7 @@ The goal is feature parity first, automation second:
 - Same Secrets Manager integration.
 - Same security group boundaries.
 
-Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints, Route 53, etc.) are treated as later enhancements rather than changing the baseline implementation.
+Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints, Route 53 was added in Session 15–16 as a course-taught exception) are otherwise treated as later enhancements rather than changing the baseline implementation.
 
 ## Key Decisions
 
@@ -64,14 +54,21 @@ Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints,
 - Project 1 EC2 instances will be terminated instead of imported into Terraform state.
 - No ALB or Interface VPC Endpoints during Phase 1 scope.
 - S3 Gateway VPC Endpoint (`aws_vpc_endpoint.s3`) added in Phase 4 — required for Ansible's `aws_ssm` connection plugin, which relays file transfers through S3. Free (Gateway type), associated with the private route table only.
-- RabbitMQ is installed via Ansible from the official RabbitMQ/Cloudsmith dnf repositories (not a golden AMI, unlike Project 1) — our Terraform-provisioned RabbitMQ instance uses the standard dynamic `data.aws_ami` lookup with nothing pre-installed, so Ansible does the real configuration-management work here. Amazon Linux 2023 uses the "el9" repository family for RabbitMQ/Erlang (confirmed via official current RabbitMQ docs, 2026-09-22) — possibly the actual root cause behind Project 1's own unresolved `dnf install` failure, which may have used "el8" paths on an AL2023 host.
+- RabbitMQ is installed via Ansible from the official RabbitMQ/Cloudsmith dnf repositories (not a golden AMI, unlike Project 1).
+- Any Python package a role needs that isn't available via `dnf` follows the S3-hosted-wheel pattern rather than reaching PyPI directly.
+- A temporary NAT Gateway is the accepted pattern for one-time bootstrap installs with a real, non-trivial dependency chain, torn down and removed from code immediately after use.
+- **Tomcat version corrected from 9 to 10** — verified against official Tomcat/Spring documentation. Fixed manually on the live instance in Session 15, and the Ansible role brought into line with that fix this session (commit `90b1179`).
+- **Private Route 53 hosted zone (`vprofile.internal`) added for internal service DNS**, paired with a VPC DHCP option set (`domain_name = vprofile.internal`) so bare hostnames actually resolve — the zone alone wasn't sufficient without the DHCP fix (Session 16).
+- **Application credentials are rendered at deploy time from a Jinja2 template, not left as the WAR's baked-in defaults.** The WAR ships `jdbc.password=admin123` and `rabbitmq.password=test` — confirmed (via Project 1's own `PROGRESS.md`) to be the reference app's original Vagrant-era defaults, the same `admin123` Project 1's `mysql.sh` originally hardcoded before its own Secrets Manager migration. Project 1's own architecture never edited these baked-in values — it dynamically wrote a fresh `application.properties` at boot using real fetched secrets. This session replicates that same pattern via Ansible: a `templates/application.properties.j2` file (owned by the `tomcat` role) with `jdbc.password`/`rabbitmq.password` parameterized, rendered via `amazon.aws.secretsmanager_secret` lookups (`vprofile/db/app-password`, `vprofile/rmq/test-password`) and deployed to the Tomcat-exploded `webapps/vprofile/WEB-INF/classes/` path (not the `.war` archive itself, which Tomcat doesn't re-read), with `mode: '0640'` since the file now contains a live database password. A `wait_for` task polls for the exploded directory to exist first, since Tomcat only creates it a few seconds after service start.
 
 ### Security Decisions
 
 - Reuse Project 1 Secrets Manager secrets:
   - `vprofile/db/admin-password`
   - `vprofile/rmq/test-password`
+- Dedicated `vprofile/db/app-password` secret created in Project 2 for the least-privilege `admin` MariaDB app user (separate from root).
 - No hardcoded credentials committed to the repository.
+- `application.properties` on the live instance is now `mode: 0640`, owned `tomcat:tomcat` — verified this session that a non-privileged SSM session user (`ssm-user`) genuinely cannot read it without `--become`, confirming the permission actually restricts access rather than being cosmetic.
 - Maintain the same least-privilege IAM model established in Project 1.
 
 ### Engineering Process Decisions
@@ -80,7 +77,9 @@ Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints,
 
 > Nothing is marked COMPLETE until verified against live AWS state or successful tool output.
 
-Implementation alone is not completion. Verification evidence is recorded before updating `PROGRESS.md`.
+**Git identity is environment-specific, reinforced this session:** WSL's Git had no configured identity (never used for commits before), causing a failed commit attempt mid-session. Per Session 13's existing working agreement, all `git` commands run in Git Bash only — this was a one-off slip, not a policy change, and the fix was switching shells, not configuring a second Git identity in WSL.
+
+**`git commit --amend` used once this session, safely** — the initial `tomcat10` fix commit was staged and committed before the new template folder was added, understating what the commit actually contained. Since the commit was still local/unpushed (confirmed via `git status` showing "ahead of origin by N commits" before amending), amending it to include the template folder and an accurate message was safe — this is different from rewriting already-pushed/shared history, which this project's hygiene rules avoid.
 
 ### Terraform Safety Decisions
 
@@ -88,67 +87,45 @@ Implementation alone is not completion. Verification evidence is recorded before
 - Review `terraform plan` before every apply.
 - Review and explicitly approve destructive changes before `terraform destroy`.
 - Pin Terraform provider versions and commit `.terraform.lock.hcl` when appropriate.
-- Record the Terraform version used by the project.
-- Terraform version verified via `terraform -version`: **v1.16.1** (upgraded from v1.15.7, installed via Chocolatey).
-- AWS provider pinned to `~> 5.31.0` in `terraform/versions.tf`; verified via `terraform init` (initially mis-pinned as `~> 5.31`, which pulled v5.100.0 — corrected to three-segment constraint, re-verified at v5.31.0).
-- AWS provider pinned to `~> 5.31.0` in `terraform/versions.tf`; verified via `terraform init` (initially mis-pinned as `~> 5.31`, which pulled v5.100.0 — corrected to three-segment constraint, re-verified at v5.31.0).
+- Terraform version verified via `terraform -version`: **v1.16.1**.
+- AWS provider pinned to `~> 5.31.0` in `terraform/versions.tf`.
+- `terraform/ec2.tf` periodically shows as "modified" under WSL's Git but not Git Bash's — confirmed this session (via `git diff --stat`: 80 insertions/80 deletions, identical content) to be a CRLF/LF line-ending artifact from cross-environment editing, not a real change. Left uncommitted deliberately; to be normalized during the eventual Repository Hygiene Checkpoint, not chased mid-session.
 
 ### Terraform / Ansible Boundary
 
-Terraform owns infrastructure:
-
-- VPC
-- subnets
-- routing
-- security groups
-- IAM
-- EC2
-
-Ansible owns post-boot configuration:
-
-- packages
-- service configuration
-- application configuration
-- service startup
-- idempotent changes
-
-No duplicated ownership unless a documented reason exists.
+Terraform owns infrastructure: VPC, subnets, routing, security groups, IAM, EC2.
+Ansible owns post-boot configuration: packages, service configuration, application configuration, service startup, idempotent changes.
 
 ### Ansible Connectivity
 
-Before implementing roles, choose and document the connection method used to reach private EC2 instances.
-
-The connection method must fit the approved AWS architecture and must not introduce public SSH access merely for convenience.
+Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansible connection plugin. Confirmed working end-to-end since Session 11.
 
 ## Completed Work
 
-- GitHub repository `iac-terraform-ansible` created via `gh repo create` (private).
-- `gh` CLI installed and authenticated (`winpty gh auth login` required — MinTTY has no PTY support).
-- Repository cloned and located at `G:\Tutorial Folder\DevOpsTutorials\DevOps Project\iac-terraform-ansible`.
-- Directory structure created: `terraform/`, `ansible/`, `docs/`.
-- `.gitignore` written (Terraform state/vars, secrets/keys, Ansible retry files, OS junk — `.terraform.lock.hcl` intentionally NOT ignored).
-- Initial commit `d4f4a03` pushed to `origin/master` — verified via `git log --oneline` and GitHub.
-
-`terraform/versions.tf` and `.terraform.lock.hcl` written, verified, committed (`1b3e3e2`). Remaining networking files (`main.tf`, `variables.tf`, `outputs.tf`, `security_groups.tf`, `iam.tf`) not yet started.
-
-- `terraform plan` run from `terraform/` (first attempt failed from repo root — no config files found there). Output: 17 to add, 0 to change, 0 to destroy — matches approved architecture exactly.
-- `terraform apply` executed and completed successfully: 17 added, 0 changed, 0 destroyed.
-- Live AWS state spot-verified against Terraform output: VPC (`vpc-0b7f81bc3fae90299`), public subnet 1a (`subnet-0b2832c32f46fe494`), and `vprofile-app-sg` (`sg-0936af3af55dc2f2b`, ingress correctly scoped to ALB security group as source, not CIDR) all confirmed matching.
+- GitHub repository `iac-terraform-ansible` created, cloned, Phase 1–3 Terraform written/applied/verified.
+- All 4 EC2 instances provisioned and SSM-verified reachable.
+- WSL2 + pipx Ansible control node fully set up; `aws_ssm` connectivity verified end-to-end.
+- All 4 Ansible roles (`tomcat`, `mariadb`, `memcached`, `rabbitmq`) written, all completed successful live runs at least once.
+- Tomcat 404 root-caused and fixed (Jakarta/Servlet namespace mismatch, Tomcat 9 → 10).
+- Private Route 53 zone + DHCP option set added for internal DNS; DNS and backend TCP reachability (3306/11211/5672) verified from `tomcat01`.
+- **This session:**
+  - `mariadb`/`rabbitmq` Secrets Manager lookup-namespace fix committed (`f096304`).
+  - Route 53 + DHCP option set Terraform additions committed (`ef2e2b7`).
+  - `tomcat` role reconciled to install `tomcat10` (matching the verified manual fix), plus new tasks rendering `application.properties` from a Jinja2 template with real `jdbc.password`/`rabbitmq.password` values fetched from Secrets Manager — committed together (`90b1179`), verified via a scoped `--limit tomcat01` playbook run (`changed=2`, `failed=0`), `systemctl is-active` → `active`, `curl` → `200`, and the rendered file's real password confirmed via an `ansible ... -b` (`--become`) ad-hoc read.
+  - `terraform/ec2.tf`'s apparent diff identified as a harmless CRLF artifact, deliberately left uncommitted.
 
 ## Implementation Phases
 
-| Phase | Focus | Deliverables |
-|-------|-------|-------------|
-| Phase 1 | Terraform networking & IAM | VPC, subnets, route tables, Internet Gateway, security groups, IAM roles, successful `terraform validate` and `terraform plan`. |
-| Phase 2 | Terraform EC2 infrastructure | MariaDB, Memcached, RabbitMQ, Tomcat instances defined in Terraform. |
-| Phase 3 | Terraform apply & verification | Infrastructure created, AWS state verified against Terraform state. |
-| Phase 4 | Ansible roles | Roles for MariaDB, Memcached, RabbitMQ, and Tomcat. |
-| Phase 5 | Ansible execution & idempotency | Successful playbook execution and zero-change second run verification. |
-| Phase 6 | Reproducibility & documentation | Destroy → recreate → verify test, README, architecture, decisions, incidents, and course coverage documentation. |
+| Phase | Focus | Deliverables | Status |
+|-------|-------|-------------|--------|
+| Phase 1 | Terraform networking & IAM | VPC, subnets, route tables, IGW, SGs, IAM roles | COMPLETE |
+| Phase 2 | Terraform EC2 infrastructure | MariaDB, Memcached, RabbitMQ, Tomcat instances | COMPLETE |
+| Phase 3 | Terraform apply & verification | Infrastructure created, state verified | COMPLETE |
+| Phase 4 | Ansible roles | Roles for all 4 services | **COMPLETE** — all 4 verified running; Tomcat 404 and credential-mismatch both fixed and verified |
+| Phase 5 | Ansible execution & idempotency | Successful run + zero-change second run | **In progress** — scoped run verified this session; full second run across all 4 hosts still pending |
+| Phase 6 | Reproducibility & documentation | Destroy → recreate → verify, README, docs | Not started |
 
 ## Resource Reference
-
-*Populated as Terraform provisions resources.*
 
 ### Networking
 
@@ -156,8 +133,12 @@ The connection method must fit the approved AWS architecture and must not introd
 - Public subnet 1a: `subnet-0b2832c32f46fe494` (`172.20.1.0/24`, us-east-1a)
 - Public subnet 1b: `subnet-01551ca8aef1df0b4` (`172.20.2.0/24`, us-east-1b)
 - Private subnet 1a: `subnet-09325f3c8dd077c24` (`172.20.3.0/24`, us-east-1a)
-- Private route table: `rtb-0714706243c1f3494` (explicit association added Session 9; the private subnet had been relying on the VPC's default main route table with no explicit association since Phase 1)
-- S3 Gateway VPC Endpoint: added Session 11, associated with the private route table (free; required for Ansible's `aws_ssm` file transfer)
+- Private route table: `rtb-0714706243c1f3494`
+- S3 Gateway VPC Endpoint: `vpce-0d0ec0b2adb689e2d`
+- Route 53 private hosted zone: `vprofile.internal` — zone id `Z007278527TDFAQT44AOY`
+  - `db01.vprofile.internal` → `172.20.3.56`
+  - `mc01.vprofile.internal` → `172.20.3.237`
+  - `rmq01.vprofile.internal` → `172.20.3.106`
 
 ### Security Groups
 
@@ -172,76 +153,68 @@ The connection method must fit the approved AWS architecture and must not introd
 
 - Role: `vprofile-ec2-role`
 - Instance profile: `vprofile-ec2-instance-profile`
-- Inline policy: `vprofile-secrets-access` (scoped to 2 Secrets Manager ARNs)
+- Inline policies: `vprofile-secrets-access`, `vprofile-s3-artifacts-access`
 - Attached managed policy: `AmazonSSMManagedInstanceCore`
 
 ### EC2 Instances
 
-- App tier (Tomcat): `i-07cd82896ef307617` (`t3.micro`, `172.20.3.33`, private subnet)
-- DB tier (MariaDB): `i-00fad7b130b62fb64` (`t3.micro`, `172.20.3.56`, private subnet)
-- Cache tier (Memcached): `i-0adafe2d23aa927fa` (`t3.micro`, `172.20.3.237`, private subnet)
-- MQ tier (RabbitMQ): `i-0e3142d8be4ef6eee` (`t3.micro`, `172.20.3.106`, private subnet)
-
-AMI: Amazon Linux 2023 **standard** variant (resolved dynamically via `data.aws_ami`, pinned per-instance via `lifecycle.ignore_changes`). Filter tightened to `al2023-ami-2023.*-x86_64` — see Known Issues for why the original `al2023-ami-*-x86_64` filter was insufficient. Instance IDs above are the third generation of these instances (recreated twice during Session 9 SSM troubleshooting).
+- App tier (Tomcat): `i-07cd82896ef307617` (`t3.micro`, `172.20.3.33`)
+- DB tier (MariaDB): `i-00fad7b130b62fb64` (`t3.micro`, `172.20.3.56`)
+- Cache tier (Memcached): `i-0adafe2d23aa927fa` (`t3.micro`, `172.20.3.237`)
+- MQ tier (RabbitMQ): `i-0e3142d8be4ef6eee` (`t3.micro`, `172.20.3.106`)
 
 ### Secrets
 
-Reused from Project 1; no new secrets planned.
+- `vprofile/db/admin-password` (root), `vprofile/rmq/test-password` — reused from Project 1.
+- `vprofile/db/app-password` — dedicated `admin` MariaDB app-user password. Now also rendered into the live `application.properties` via the `tomcat` role.
 
 ### Ansible Control Node & Connectivity
 
-- Control node: WSL2 (Ubuntu 26.04) on the same Windows machine, via pipx-isolated install.
-- Ansible: 14.4.0 (ansible-core 2.21.4), Python 3.14.4.
-- Collections: `amazon.aws` 11.4.0, `community.aws` 11.1.0 (bundled with the full `ansible` package).
-- `boto3`/`botocore` injected into the pipx venv via `pipx inject`.
-- `session-manager-plugin` (Linux/.deb build) installed separately in Ubuntu — required alongside AWS CLI for SSM sessions.
-- AWS CLI v2.36.50 installed and configured in Ubuntu, same `gitops-terraform` IAM identity as Windows — verified via `aws sts get-caller-identity`.
-- S3 relay bucket (required by `aws_ssm` for file transfer): `vprofile-ansible-ssm-1790055238`.
-- Static inventory: `ansible/inventory/hosts.yml`, hosts grouped by tier (`app`, `db`, `cache`, `mq`), targeted by Instance ID via `ansible_host`.
-- Connectivity verified: `ansible all -i inventory/hosts.yml -m ping` → SUCCESS on all 4 hosts (2026-09-22).
+- Control node: WSL2 (Ubuntu), pipx-isolated Ansible 14.4.0 (ansible-core 2.21.4).
+- Collections: `amazon.aws`, `community.aws`, `ansible.mysql`, `community.rabbitmq`.
+- S3 relay bucket: `vprofile-ansible-ssm-1790055238`.
+- Static inventory: `ansible/inventory/hosts.yml`.
+- Top-level playbook file: `ansible/playbook.yml` (not `site.yml`).
+- Git commands run in Git Bash only, per Session 13's working agreement — reinforced this session after a failed commit attempt from WSL.
 
-### Ansible Roles (Phase 4)
+### S3 Artifacts Bucket Layout
 
-- `roles/mariadb/` — installs MariaDB 10.5 (`mariadb105-server`), sets root password via Secrets Manager (`vprofile/db/admin-password`), configures `bind-address=0.0.0.0`, creates `accounts` database, imports schema from `s3://vprofile-artifacts-747336059892/db/accountsdb.sql` (Project 1's verified schema — `role`, `user`, `user_role` tables), creates `admin` application user (`accounts.*:ALL`, host `%`). Database/user naming confirmed against Project 1's actual verified `PROGRESS.md`, not assumed.
-- `roles/memcached/` — installs `memcached`, configures listen address via `lineinfile` on `/etc/sysconfig/memcached` (`OPTIONS="-l 0.0.0.0"`). No auth (Memcached has none) — security boundary is `vprofile-mc-sg` alone.
-- `roles/rabbitmq/` — designed, not yet written to disk. Will install Erlang + RabbitMQ from the official `el9`-family Cloudsmith-mirror dnf repos, then create the `test` admin user (matching Project 1's verified `rabbitmqctl` setup) via `community.rabbitmq.rabbitmq_user`, password from Secrets Manager (`vprofile/rmq/test-password`).
-- `roles/tomcat/` — not started.
+- `db/accountsdb.sql` — MariaDB schema.
+- `deps/pymysql-1.2.3-py3-none-any.whl` — standard location for any future Python dependency not available via `dnf`.
+- `app/vprofile-v2.war` — application WAR, fetched by the `tomcat` role.
 
 ## Known Issues
 
-- Documentation miscount: this file previously stated Phase 1 would produce 13 resources; itemized breakdown actually sums to 17, matching `terraform plan`/`apply` output exactly. No config issue — corrected here.
-- Cross-project naming collision: Project 1 (`aws-lift-and-shift`) and Project 2 reuse identical `Name` tags (e.g. `vprofile-app-sg`). An un-scoped tag-only AWS CLI query returned Project 1's SG instead of Project 2's. Fix: always scope security-group/resource lookups by VPC ID, not tag name alone, in this project.
-- **Resolved 2026-09-12:** Project 1's documented "Existing AWS Project State" (master prompt) undercounted its security groups. Live AWS confirms 11 SGs in `vpc-0e686e7841a60b687` (not 9, not the 5 originally listed): `vprofile-alb-sg`, `vprofile-app-sg`, `vprofile-db-sg`, `vprofile-mc-sg`, `vprofile-ssm-ep-sg`, `vprofile-rmq-sg` (`sg-0ba3baa7a8a231777`), `vprofile-rmq-builder-sg`, `vprofile-ami-builder-sg`, `vprofile-secretsmgr-ep-sg`, `vprofile-ec2api-ep-sg`, `default`. Since `rmq-sg` was never in the master prompt's list, Project 2 never reproduced it. Fixed by adding `vprofile-rmq-sg` (`sg-0b8768c70645d442c`) to Project 2 directly, plus the corresponding `ssm_ep` ingress rule and a matching `mc`-tier `ssm_ep` rule that was also found missing during this fix (see NOTES.md Session 7).
-- Unidentified VPC `vpc-0a0efac60df5e3724` found in the account (contains `docker-sg`, `sonar-sg`, no running instances). Origin unconfirmed as of this session. Not part of Project 1 or Project 2 scope. No cost impact (no instances, no NAT, no EIPs, no Interface endpoints found anywhere in the account during this session's cost audit).
-- **Resolved 2026-09-19:** SSM Session Manager could not reach any of the 4 EC2 instances (`describe-instance-information` returned empty, `start-session` failed with `TargetNotConnected`) despite correct IAM role, security groups, and NACLs. Root cause: the `data.aws_ami` filter (`al2023-ami-*-x86_64`) matched both the standard and **minimal** AL2023 AMI variants; `most_recent = true` selected the minimal variant, which does not ship with the SSM agent pre-installed — unlike the standard variant. Fixed by tightening the filter to `al2023-ami-2023.*-x86_64`, which excludes the minimal variant's `al2023-ami-minimal-...` naming pattern, then forcing instance recreation via `terraform apply -replace` (required because `lifecycle.ignore_changes = [ami]` otherwise suppresses AMI updates on existing instances). Verified via `describe-instance-information` (all 4 instances `Online`) and a live `aws ssm start-session` to the DB instance.
-- **Related, corrected during the same investigation:** the private subnet had no explicit route table association (falling back to the VPC's default main route table) since Phase 1. Fixed by adding an explicit `aws_route_table.private` + association. This was applied as a precautionary fix during troubleshooting but was **not the actual root cause** — the VPC's automatic local route already covered traffic to the endpoint ENIs regardless of explicit table content. Kept as a correct, explicit configuration going forward rather than relying on default/implicit routing.
-- **Resolved 2026-09-22:** `ansible -m ping` hung indefinitely on all 4 instances despite SSM sessions establishing successfully. Root cause: the VPC had no path to S3 (no NAT Gateway, no S3 Gateway Endpoint) — `aws_ssm`'s file-transfer step (uploading module code via a presigned S3 URL) had nowhere to route. Diagnosed via `ansible -vvvv` (showed the `curl` to S3 hanging) and confirmed via `describe-vpc-endpoints` (only the 3 SSM Interface endpoints existed). Fixed by adding `aws_vpc_endpoint.s3` (Gateway type, free, private route table only) via Terraform; verified via successful `terraform plan`/`apply` and an immediately-successful `ansible -m ping` afterward.
-- **Note, not a defect:** all 4 EC2 instances were found `stopped` at the start of this session (last verified `running` in Session 9). Restarted and re-verified `Online` in SSM before continuing — a reminder that instance state isn't guaranteed to persist between sessions and should be checked, not assumed.
+*(Cross-project naming collisions, the unidentified second VPC, and other early resolved issues — see prior session history, omitted here for length. Nothing regressed.)*
 
-- **Architecture gap found 2026-09-22 (Phase 4 role-writing):** Project 2's RabbitMQ EC2 instance uses the standard dynamic AL2023 AMI lookup, which has no RabbitMQ pre-installed — unlike Project 1's golden-AMI workaround for AL2023's packaging gap. Resolved by deciding to install RabbitMQ properly via Ansible from official Cloudsmith `el9`-family repos, rather than reusing Project 1's golden AMI or adding a NAT Gateway. Not yet implemented/tested.
-- **Useful finding for Project 1 cross-reference (not a Project 2 defect):** official current RabbitMQ docs confirm Amazon Linux 2023 belongs to the "el9" repo family, not "el8." Project 1's own unresolved Known Issue (`dnf install` failing after fixing Cloudsmith URLs) may have used el8-family paths on an AL2023 host — unconfirmed, just flagged as a plausible root cause if Project 1 is ever revisited.
+- **Resolved:** `community.aws.secretsmanager_secret` lookup-namespace bug — fixed, committed (`f096304`).
+- **Resolved:** no PyMySQL package in AL2023's default repos — S3-hosted-wheel pattern established.
+- **Resolved:** private subnet has no general internet route — temporary NAT Gateway pattern established for RabbitMQ.
+- **Resolved:** Tomcat 404 — Tomcat 9 → 10, fixed manually and now in code (`90b1179`).
+- **Resolved:** bare backend hostnames unresolvable — Route 53 zone + DHCP option set, committed (`ef2e2b7`).
+- **Resolved:** `jdbc.password=admin123` / `rabbitmq.password=test` mismatch — fixed via templated `application.properties` with real Secrets Manager values, committed and verified (`90b1179`).
+- **Open:** browser-level proof of the VProfile login page has not yet been captured.
+- **Open:** second full playbook execution/idempotency check across all 4 hosts has not yet been run.
+- **Note (not an issue):** `terraform/ec2.tf` shows as modified under WSL's Git only — confirmed CRLF-only artifact, deliberately left uncommitted; normalize during the Repository Hygiene Checkpoint.
+
 ## Definition of Done
 
 ### Terraform
 
-- [x] Terraform files written.
-- [x] `terraform fmt` produces clean formatting.
-- [x] `terraform validate` succeeds.
-- [x] `terraform plan` reviewed with expected resources only.
-- [x] `terraform apply` provisions infrastructure successfully.
-- [x] AWS infrastructure matches Terraform state.
+- [x] Terraform files written, formatted, validated, applied. AWS state matches.
 
 ### Ansible
 
-- [ ] Roles created for Tomcat, MariaDB, Memcached, RabbitMQ.
-- [ ] Inventory configured.
-- [ ] Playbook executes successfully.
-- [ ] Second execution is idempotent (zero changes).
+- [x] Roles created for Tomcat, MariaDB, Memcached, RabbitMQ.
+- [x] Inventory configured.
+- [x] Playbook executes successfully across all 4 hosts.
+- [ ] Second execution is idempotent (zero changes) — **not yet tested this session.**
 
 ### Verification
 
-- [ ] All four services healthy.
-- [ ] Application reachable.
+- [x] All four services healthy — Tomcat 10 running, VProfile app returns HTTP 200, real credentials confirmed rendered.
+- [x] Application reachable from Tomcat host — `curl http://localhost:8080/vprofile/` returns `200`.
+- [ ] Browser-level application evidence — login page screenshot still needs to be captured.
 - [ ] Destroy → recreate → verify reproducibility test completed.
 
 ### Documentation
@@ -251,51 +224,22 @@ Reused from Project 1; no new secrets planned.
 - [ ] `decisions.md`
 - [ ] `incidents.md`
 - [ ] `course-coverage.md`
-- [ ] `PROGRESS.md` finalized.
+- [x] `PROGRESS.md` — updated this session.
 
 ### Repository
 
-- [ ] Clean Conventional Commit history.
-- [ ] No secrets committed.
-- [ ] `.terraform/`, Terraform state, and sensitive generated files excluded.
-- [ ] End-to-end reproducible workflow with minimal manual steps.
-- [ ] Final repository hygiene/cleanup checkpoint completed.
-
-## Repository Status
-
-- [x] GitHub repository `iac-terraform-ansible` created.
-- [x] Local repository initialized.
-- [x] Directory structure created (`terraform/`, `ansible/`, `docs/`).
-- [x] `.gitignore` configured.
-- [x] Terraform provider/version constraints defined.
-- [x] `.terraform.lock.hcl` generated/committed.
-- [x] Initial commit pushed.
+- [x] Clean Conventional Commit history — 3 commits this session (`f096304`, `ef2e2b7`, `90b1179`), amend used once to correct an inaccurate message before pushing.
+- [x] No secrets committed.
+- [ ] Final repository hygiene/cleanup checkpoint completed — deferred to project end (includes the `ec2.tf` CRLF normalization).
 
 ## Next Step
 
-### Phase 4 — Ansible Roles (resume here)
+### Resume here — idempotency check, then screenshot
 
-1. Write `roles/rabbitmq/tasks/main.yml` and `handlers/main.yml` to disk — task list already fully designed (signing keys → yum repos via `loop` → package install → service start/enable → Secrets Manager lookup → `test` user creation). Nothing written to disk yet.
-2. Write the `tomcat` role (not started/designed).
-3. Write top-level `playbook.yml` tying all 4 roles to inventory groups (`app`, `db`, `cache`, `mq`).
-4. Run the full playbook against the real instances for the first time — nothing tested against live AWS yet; `mariadb`/`memcached` are written but unverified.
-5. Run the playbook a **second time**, check `changed: false` across all tasks — this is the deferred MariaDB root-password idempotency check (see NOTES.md Session 12) — verify, don't assume.
-6. Commit and push once tested — nothing from this session's role-writing is committed yet.
+1. **Run the full playbook** (`ansible-playbook -i inventory/hosts.yml playbook.yml`, no `--limit`) across all 4 hosts; confirm `changed=0` for every task on the second pass.
+2. **Capture a browser screenshot** of the VProfile login page loading successfully, for README documentation (redact nothing sensitive is shown on that page, but follow the project's usual redaction check regardless).
+3. Commit `NOTES.md`/`PROGRESS.md` (this update).
+4. `git push` — 4+ local commits are currently ahead of `origin/master` and unpushed.
+5. Once idempotency + screenshot are done, Phase 5 is complete and Phase 6 (reproducibility test, full documentation set) becomes the next real phase.
 
-**Cost note:** all 4 EC2 instances were left `running` at end of session (needed for upcoming testing) — verify current state at the start of next session rather than assuming (see NOTES.md Session 11, "instance state can drift between sessions").
-
-**Session-start guidance:** review NOTES.md Session 12 before continuing — a large amount of new Ansible/RabbitMQ reasoning was covered. Continue matching the student's explicit explanation preference: literal, no metaphors/analogies, line-by-line breakdowns of code, and explicit "why this over that / is this best practice / interview-relevant" framing for every meaningful choice. This is now the default teaching style for the rest of this project, not a one-session adjustment.
-
-## Assumptions
-
-- Project 1 (`aws-lift-and-shift`) is fully completed and archived.
-- AWS CLI configured for IAM user `gitops-terraform`.
-- AWS Region: `us-east-1`.
-- AWS Account: `747336059892`.
-- Terraform installed locally — **verified**, v1.16.1 (see Key Decisions).
-- Ansible installed locally.
-- Git Bash is the primary shell environment.
-
-## Notes
-
-See `NOTES.md` for chronological study notes and session checkpoints.
+**Cost note:** Route 53 private hosted zone (~$0.50/month) is live. All 4 EC2 instances confirmed `running` at the start of this session.
