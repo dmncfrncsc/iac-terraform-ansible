@@ -140,25 +140,26 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ### Networking
 
-- VPC: `vpc-0b7f81bc3fae90299` (`172.20.0.0/16`)
-- Public subnet 1a: `subnet-0b2832c32f46fe494` (`172.20.1.0/24`, us-east-1a)
-- Public subnet 1b: `subnet-01551ca8aef1df0b4` (`172.20.2.0/24`, us-east-1b)
-- Private subnet 1a: `subnet-09325f3c8dd077c24` (`172.20.3.0/24`, us-east-1a)
-- Private route table: `rtb-0714706243c1f3494`
-- S3 Gateway VPC Endpoint: `vpce-0d0ec0b2adb689e2d`
-- Route 53 private hosted zone: `vprofile.internal` — zone id `Z007278527TDFAQT44AOY`
-  - `db01.vprofile.internal` → `172.20.3.56`
-  - `mc01.vprofile.internal` → `172.20.3.237`
-  - `rmq01.vprofile.internal` → `172.20.3.106`
+- VPC: `vpc-08bd435f56891523a` (`172.20.0.0/16`)
+- Public subnet 1a: `subnet-0c9bbb90999b99dca` (`172.20.1.0/24`, us-east-1a)
+- Public subnet 1b: `subnet-0169a70a3bc05097e` (`172.20.2.0/24`, us-east-1b)
+- Private subnet 1a: `subnet-0812a6b32b9949a73` (`172.20.3.0/24`, us-east-1a)
+- Private route table: `rtb-05b10770ce329090f`
+- S3 Gateway VPC Endpoint: `vpce-02cfb0a1860f904f5`
+- VPC DHCP option set: `dopt-0d69face8dc93db76`
+- Route 53 private hosted zone: `vprofile.internal` — zone id `Z07956241HBR3FVYWP3CB`
+  - `db01.vprofile.internal` → `172.20.3.103`
+  - `mc01.vprofile.internal` → `172.20.3.186`
+  - `rmq01.vprofile.internal` → `172.20.3.245`
 
 ### Security Groups
 
-- `vprofile-alb-sg` — `sg-04f2f2d83159f5e1c`
-- `vprofile-app-sg` — `sg-0936af3af55dc2f2b`
-- `vprofile-db-sg` — `sg-0939ef1bb0fa7d572`
-- `vprofile-mc-sg` — `sg-0a83f618b4a023ee5`
-- `vprofile-ssm-ep-sg` — `sg-095cb993f3dfc8a34`
-- `vprofile-rmq-sg` — `sg-0b8768c70645d442c`
+- `vprofile-alb-sg` — `sg-0a1f1d3eb695e0b9f`
+- `vprofile-app-sg` — `sg-00326644e64269700`
+- `vprofile-db-sg` — `sg-00e621a08a33938e5`
+- `vprofile-mc-sg` — `sg-00112dec9af86fba4`
+- `vprofile-ssm-ep-sg` — `sg-04d98abaeb5f53e82`
+- `vprofile-rmq-sg` — `sg-076f05b512766a6c6`
 
 ### IAM Roles / Instance Profiles
 
@@ -169,10 +170,10 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ### EC2 Instances
 
-- App tier (Tomcat): `i-07cd82896ef307617` (`t3.micro`, `172.20.3.33`)
-- DB tier (MariaDB): `i-00fad7b130b62fb64` (`t3.micro`, `172.20.3.56`)
-- Cache tier (Memcached): `i-0adafe2d23aa927fa` (`t3.micro`, `172.20.3.237`)
-- MQ tier (RabbitMQ): `i-0e3142d8be4ef6eee` (`t3.micro`, `172.20.3.106`)
+- App tier (Tomcat): `i-07cdc61e6b1142ec5` (`t3.micro`, `172.20.3.15`)
+- DB tier (MariaDB): `i-0fe7a3a6b6a2f0370` (`t3.micro`, `172.20.3.103`)
+- Cache tier (Memcached): `i-02b3dc69a55f16042` (`t3.micro`, `172.20.3.186`)
+- MQ tier (RabbitMQ): `i-069441e9930abc795` (`t3.micro`, `172.20.3.245`)
 
 ### Secrets
 
@@ -232,12 +233,12 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ### Documentation
 
-- [x] `README.md` — drafted from verified project state and adopted by the user.
-- [ ] `architecture.md`
-- [ ] `decisions.md`
-- [ ] `incidents.md`
-- [ ] `course-coverage.md`
-- [x] `PROGRESS.md` — updated this session.
+- [x] `README.md` — drafted from verified project state, committed and pushed (`c1d7822`).
+- [x] `architecture.md` — committed and pushed (`c1d7822`).
+- [x] `decisions.md` — committed and pushed (`c1d7822`).
+- [x] `incidents.md` — committed and pushed (`c1d7822`).
+- [x] `course-coverage.md` — committed and pushed (`c1d7822`).
+- [x] `PROGRESS.md` — updated this session (Resource Reference refreshed against verified post-rebuild AWS state).
 
 ### Repository
 
@@ -247,29 +248,14 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ## Next Step
 
-### Resume here — Phase 6 documentation
+### Resume here — Final repository hygiene checkpoint
 
-Idempotency re-run confirmed (`changed=0, failed=0`, all 4 hosts). The reproducibility test is fully closed out. Remaining Phase 6 work is documentation + final hygiene, in this order:
+All Phase 6 documentation is committed and pushed (`c1d7822`): `README.md`, `docs/architecture.md`, `docs/decisions.md`, `docs/incidents.md`, `docs/course-coverage.md`. The Resource Reference table above reflects current post-rebuild AWS state, verified this session via `describe-route-tables`, `describe-vpc-endpoints`, and `describe-security-groups`.
 
-1. Refresh the stale Resource Reference table from the latest rebuild values below and remove the duplicate superseded-values block once the table is current.
-2. `docs/architecture.md` — Mermaid diagram of what's actually built (VPC, subnets, 4 EC2 instances, SGs, Route 53 private zone, S3 Gateway endpoint) — no aspirational/unbuilt components.
-3. `docs/decisions.md` — ADR-lite entries for the meaningful decisions made across this project (Terraform+Ansible split, SSM connectivity, temporary NAT Gateway pattern, templated `application.properties`, Route 53 + DHCP option set, dynamic vs. hardcoded DNS records).
-4. `docs/incidents.md` — real incidents from this project, using the fields this project's rules define (symptoms/impact, diagnostic evidence, root cause, fix + verification, prevention). At minimum: the Tomcat Jakarta/Servlet 404, the post-rebuild hardcoded-DNS connectivity failure, and the 3 idempotency bugs.
-5. `docs/course-coverage.md` — Course Topic → Project → Implementation → Evidence matrix for Project 2.
-6. Final repository hygiene checkpoint — includes the still-deferred `ec2.tf` CRLF normalization, plus the general cleanup checklist (accidental files, duplicates, `.gitignore`, clean git status), closed with one `chore:` commit.
+Only the repository hygiene checkpoint remains before Project 2 can be closed:
 
-**Resource Reference table note:** the table further down this file (under "Resource Reference") still holds the *pre-rebuild* IDs/IPs from before Session 19's destroy/recreate. The "New resource IDs from this rebuild" block above is currently the accurate one. When starting the documentation work, rewrite the main Resource Reference table from the rebuild block's values and remove the "supersedes" note, so there's one clean source of truth instead of two tables.
+1. Normalize `terraform/ec2.tf`'s CRLF/LF line-ending diff (deferred since Session 17 — confirmed harmless, WSL-only artifact).
+2. Run the general cleanup checklist: accidental files, duplicate artifacts, `.gitignore` correctness, clean `git status`.
+3. One final `chore:` commit closing out the project.
 
-**New resource IDs from this rebuild (for reference during debugging — supersede the old Resource Reference table below until Phase 6 is fully done and that table is rewritten):**
-- VPC: `vpc-08bd435f56891523a`
-- Private subnet 1a: `subnet-0812a6b32b9949a73`
-- Public subnet 1a: `subnet-0c9bbb90999b99dca` / 1b: `subnet-0169a70a3bc05097e`
-- App/tomcat01: `i-07cdc61e6b1142ec5` (`172.20.3.15`)
-- DB/mariadb01: `i-0fe7a3a6b6a2f0370` (`172.20.3.103`)
-- Cache/memcached01: `i-02b3dc69a55f16042` (`172.20.3.186`)
-- MQ/rabbitmq01: `i-069441e9930abc795` (`172.20.3.245`)
-- app-sg: `sg-00326644e64269700`, db-sg: `sg-00e621a08a33938e5`, mc-sg: `sg-00112dec9af86fba4`, rmq-sg: `sg-076f05b512766a6c6`
-- Route 53 zone: `Z07956241HBR3FVYWP3CB`, DHCP options: `dopt-0d69face8dc93db76`
-
-**Cost note:** All 4 instances `running`, Route 53 zone live (~$0.50/month). NAT Gateway/EIP already destroyed and removed from code this session — nothing extra billing beyond the normal 4-instance baseline. Re-verify instance state at next session start regardless (has drifted before).
-
+**Cost note:** All 4 instances `running`, Route 53 zone live (~$0.50/month). No NAT Gateway/EIP present. Re-verify instance state at next session start regardless — it has drifted before.
