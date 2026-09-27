@@ -162,7 +162,7 @@ resource "aws_route53_record" "db01" {
   name    = "db01.vprofile.internal"
   type    = "A"
   ttl     = 300
-  records = ["172.20.3.56"]
+  records = [aws_instance.db.private_ip]
 }
 
 resource "aws_route53_record" "mc01" {
@@ -170,7 +170,7 @@ resource "aws_route53_record" "mc01" {
   name    = "mc01.vprofile.internal"
   type    = "A"
   ttl     = 300
-  records = ["172.20.3.237"]
+  records = [aws_instance.mc.private_ip]
 }
 
 resource "aws_route53_record" "rmq01" {
@@ -178,7 +178,7 @@ resource "aws_route53_record" "rmq01" {
   name    = "rmq01.vprofile.internal"
   type    = "A"
   ttl     = 300
-  records = ["172.20.3.106"]
+  records = [aws_instance.rmq.private_ip]
 }
 
 resource "aws_vpc_dhcp_options" "main" {
