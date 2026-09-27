@@ -28,53 +28,86 @@ Terraform creates a VPC with two public subnets and one private subnet. The four
 - **Memcached** provides caching.
 - **RabbitMQ** provides messaging.
 
-The application uses private Route 53 records for the database, cache, and message broker. The VPC DHCP option set supplies the private DNS suffix. Security groups allow backend traffic from the application tier on the required service ports. Systems Manager VPC endpoints provide management connectivity, and an S3 Gateway endpoint provides private-subnet access to S3.
+The application uses private Route 53 records for the database, cache, and message broker. The VPC DHCP option set supplies `vprofile.internal` as the DNS search suffix. Backend security groups allow service-port ingress from the application security group; the SSM endpoint security group permits HTTPS from the service security groups. A separate S3 Gateway endpoint provides private-subnet access to both the artifacts bucket and the SSM relay bucket.
 
 The operator runs Terraform and Ansible from a control machine. Ansible connects through SSM and uses S3 for file transfers. The application was verified through SSM port forwarding.
 
 ```mermaid
 flowchart LR
-    operator["Operator / Ansible control node"]
+    operator["Operator / WSL2"]
+    terraform["Terraform"]
+    ansible["Ansible control node"]
     awsapi["AWS APIs"]
-    ssm["Systems Manager"]
-    artifacts["S3 artifacts and SSM transfer bucket"]
-    secrets["AWS Secrets Manager"]
+    ssmService["Systems Manager service"]
+    secrets["Secrets Manager"]
+    artifacts["Artifacts S3 bucket<br/>WAR, SQL schema, PyMySQL wheel"]
+    relay["SSM relay S3 bucket<br/>aws_ssm file transfers"]
 
-    operator -->|Terraform| awsapi
-    operator -->|Ansible aws_ssm connection| ssm
-    operator -->|Ansible secret lookups| secrets
+    operator --> terraform --> awsapi
+    operator --> ansible
+    ansible -->|aws_ssm| ssmService
+    ansible -->|secret lookups| secrets
 
-    subgraph vpc["AWS VPC"]
-        subgraph public["Two public subnets"]
+    subgraph vpc["VPC 172.20.0.0/16"]
+        dhcp["VPC DHCP options<br/>search domain: vprofile.internal"]
+        dns["Route 53 private zone<br/>vprofile.internal"]
+        ssmEndpoints["SSM interface endpoints<br/>ssm, ssmmessages, ec2messages"]
+        ssmSG["vprofile-ssm-ep-sg<br/>attached to SSM endpoints"]
+        s3Endpoint["S3 Gateway endpoint"]
+
+        subgraph public["Public subnets — us-east-1a and us-east-1b"]
+            publicA["Public subnet 1a"]
+            publicB["Public subnet 1b"]
+            publicRT["Public route table"]
             igw["Internet Gateway"]
+            publicA --> publicRT
+            publicB --> publicRT
+            publicRT --> igw
         end
 
         subgraph private["Private subnet — us-east-1a"]
-            app["Tomcat 10<br/>VProfile application"]
-            db["MariaDB"]
-            cache["Memcached"]
-            mq["RabbitMQ"]
-            endpoints["SSM interface endpoints<br/>S3 Gateway endpoint"]
-            dns["Route 53 private zone<br/>vprofile.internal"]
+            app["Tomcat 10 / VProfile EC2"]
+            appSG["vprofile-app-sg"]
+            db["MariaDB EC2"]
+            dbSG["vprofile-db-sg"]
+            cache["Memcached EC2"]
+            cacheSG["vprofile-mc-sg"]
+            mq["RabbitMQ EC2"]
+            mqSG["vprofile-rmq-sg"]
         end
 
+        appSG -->|attached to| app
+        dbSG -->|attached to| db
+        cacheSG -->|attached to| cache
+        mqSG -->|attached to| mq
         app -->|TCP 3306| db
         app -->|TCP 11211| cache
         app -->|TCP 5672| mq
-        dns -.-> db
-        dns -.-> cache
-        dns -.-> mq
-        endpoints --> app
-        endpoints --> db
-        endpoints --> cache
-        endpoints --> mq
+        appSG -.->|allowed source TCP 3306| dbSG
+        appSG -.->|allowed source TCP 11211| cacheSG
+        appSG -.->|allowed source TCP 5672| mqSG
+        dhcp -->|sets DNS search suffix| private
+        dns -.->|db01| db
+        dns -.->|mc01| cache
+        dns -.->|rmq01| mq
+        ssmEndpoints --- ssmSG
+        appSG -.->|HTTPS TCP 443| ssmSG
+        dbSG -.->|HTTPS TCP 443| ssmSG
+        cacheSG -.->|HTTPS TCP 443| ssmSG
+        mqSG -.->|HTTPS TCP 443| ssmSG
     end
 
-    ssm --> endpoints
-    artifacts --> endpoints
+    ssmService <--> ssmEndpoints
+    app --> s3Endpoint
+    db --> s3Endpoint
+    cache --> s3Endpoint
+    mq --> s3Endpoint
+    s3Endpoint --> artifacts
+    s3Endpoint --> relay
+    ansible -.->|temporary file relay| relay
 ```
 
-The Terraform code defines an ALB security group, but it does **not** provision an Application Load Balancer. The application has no public web endpoint in this project; it was accessed through SSM port forwarding.
+The application security group permits TCP 8080 from `vprofile-alb-sg`, which Terraform defines, but no Application Load Balancer is provisioned or attached to that security group. The application has no public web endpoint in this project; it was verified through SSM port forwarding.
 
 ![VProfile login page](docs/images/vprofile-login-page.png)
 
@@ -258,6 +291,7 @@ For a production system, I would use shared and locked Terraform state, dynamic 
 
 ```text
 .
+├── .gitignore
 ├── ansible/
 │   ├── inventory/hosts.yml
 │   ├── playbook.yml
@@ -267,6 +301,10 @@ For a production system, I would use shared and locked Terraform state, dynamic 
 │       ├── rabbitmq/
 │       └── tomcat/
 ├── docs/
+│   ├── architecture.md
+│   ├── course-coverage.md
+│   ├── decisions.md
+│   ├── incidents.md
 │   └── images/vprofile-login-page.png
 ├── terraform/
 │   ├── ec2.tf
@@ -281,3 +319,5 @@ For a production system, I would use shared and locked Terraform state, dynamic 
 ```
 
 See `PROGRESS.md` for the current implementation state and `NOTES.md` for the session-by-session learning record.
+
+
