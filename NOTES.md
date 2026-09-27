@@ -693,3 +693,23 @@ to show `PingStatus: Online` before retrying Ansible.
 **`when:` is a task-level directive, not a module argument — it must be indented at the same level as the module name, never nested underneath it.** Made this exact mistake once this session (on the mariadb import task — `when` ended up indented as if it were an `ansible.mysql.mysql_db` parameter, which would have silently made the guard do nothing) and caught it by re-reading the file's actual indentation before running anything, rather than assuming the edit matched the diff.
 
 **The general fix shape used twice today, worth remembering as a reusable pattern:** when a task's own module can't idempotently check its own precondition, add a separate read-only task that queries real state (`register:` the result, `changed_when: false` since it's read-only, `failed_when: false` if a "no match" exit code is expected), then gate the real task behind `when:` on that result — rather than trusting the module's own `state: present`/`import` to be smart about it.
+
+## Session 19 — 2026-09-27 — Reproducibility Test: Destroy/Recreate Succeeded, New Connectivity Gap Found
+
+**Full destroy → recreate cycle completed cleanly** — `terraform destroy` (35 destroyed) followed by `terraform apply` (35 added) from a genuinely blank state, no manual AWS Console intervention. All 4 EC2 instances came up with a correctly-resolved standard (non-minimal) AL2023 AMI — the Session 9 AMI-filter fix held on a real second test.
+
+**SSM agent registration lag is real and measurable, not instant** — after `terraform apply` completes, instances don't appear in `describe-instance-information` immediately. This run: 2 of 4 registered within ~90s, all 4 registered within ~8 minutes of apply completing. Worth checking `PingStatus` before assuming Ansible connectivity is broken on a freshly-built environment.
+
+**The RabbitMQ temporary-NAT-Gateway bootstrap (Session 14) is a confirmed repeatable requirement, not a one-time fix** — rebuilding from scratch reproduced the exact same failure (GPG key fetch timeout, no route to `github.com`), for the exact same architectural reason (private subnet has no general internet route; RabbitMQ needs live `dnf` dependency resolution against upstream repos, which can't be substituted with a single S3-hosted file the way the PyMySQL wheel was). Confirmed the fix procedure is a repeatable 7-step cycle: add 3 NAT resources to `main.tf` → `plan` → `apply` → run Ansible `--limit rabbitmq01` → `terraform destroy -target=` the 3 resources → delete the block from `main.tf` → `plan` again to confirm `No changes`. Considered scripting this automatically; decided against it for now since Phase 6's destroy/recreate is a rare, one-time verification exercise, not a recurring workflow — noted as a possible future improvement, not implemented.
+
+**New, unresolved connectivity gap found via the reproducibility test itself** — after rebuilding, `tomcat01` cannot reach any of the 3 backend services (MariaDB 3306, Memcached 11211, RabbitMQ 5672), tested and failed via both hostname (`db01.vprofile.internal`) and direct private IP (`172.20.3.56`). This is a genuinely new problem not present before the destroy/recreate — the exact same architecture worked prior to this session.
+
+**Ruled out so far (with real evidence, not assumption):**
+- All 3 backend services confirmed `active` via `systemctl is-active`, confirmed actually listening via `ss -tlnp` on their expected ports.
+- DNS resolution confirmed correct (`getent hosts` returned correct IPs for all 3 backend hostnames from `tomcat01`).
+- `vprofile-db-sg`'s ingress rule confirmed correct: port 3306, source = current `vprofile-app-sg` ID (`sg-00326644e64269700`) — no stale ID.
+- `vprofile-app-sg`'s egress confirmed unrestricted (`-1` protocol, `0.0.0.0/0`) — not the source of the block.
+- Both `tomcat01` and `mariadb01` confirmed to exist (verification of matching subnet was in progress when session ended — **first thing to check next session**).
+
+**Failing by IP, not just hostname, is the important clue** — this rules out DNS/DHCP as any part of the current problem (it worked correctly right before this failure was found), and narrows the search to something at the routing or lower-level networking layer: subnet placement, route table association, or possibly NACLs (not yet checked this session).
+
