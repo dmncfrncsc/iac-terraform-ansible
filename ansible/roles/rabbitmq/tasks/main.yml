@@ -1,8 +1,16 @@
 ---
+- name: Check whether RabbitMQ GPG key is already imported
+  ansible.builtin.shell:
+    cmd: "rpm -q gpg-pubkey --qf '%{summary}\\n' | grep -i rabbitmq"
+  register: rabbitmq_key_check
+  changed_when: false
+  failed_when: false
+
 - name: Import RabbitMQ GPG signing key
   ansible.builtin.rpm_key:
     key: https://github.com/rabbitmq/signing-keys/releases/download/3.0/rabbitmq-release-signing-key.asc
     state: present
+  when: rabbitmq_key_check.rc != 0
 
 - name: Add RabbitMQ and Erlang yum repositories
   ansible.builtin.yum_repository:

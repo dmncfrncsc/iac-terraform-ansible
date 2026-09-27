@@ -26,7 +26,7 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **Phase 4 — Ansible Roles: functionally complete and verified.** All 4 roles have completed successful live runs. The `tomcat` role now matches the verified live state (Tomcat 10, correct paths), and the `jdbc.password`/`rabbitmq.password` mismatch is fixed via a templated `application.properties` rendered from real Secrets Manager values at deploy time — replacing the WAR's baked-in `admin123`/`test` defaults, following the same "write real credentials at boot, don't edit compiled defaults" pattern Project 1 used.
 
-**Phase 5 — Ansible execution & idempotency: in progress this session, not yet run.** The scoped `--limit tomcat01` run that applied the credential fix is verified; a full second run across all 4 hosts, checked for `changed=0`, is the immediate next step.
+**Phase 5 — Ansible execution & idempotency: COMPLETE.** A full second run across all 4 hosts returned `changed=0, failed=0` for every host (`mariadb01` and `rabbitmq01` each with one correctly-skipped task). Getting there required finding and fixing three real idempotency bugs this session — see Key Decisions and Known Issues.
 
 ## Project Baseline
 
@@ -60,6 +60,10 @@ Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints,
 - **Tomcat version corrected from 9 to 10** — verified against official Tomcat/Spring documentation. Fixed manually on the live instance in Session 15, and the Ansible role brought into line with that fix this session (commit `90b1179`).
 - **Private Route 53 hosted zone (`vprofile.internal`) added for internal service DNS**, paired with a VPC DHCP option set (`domain_name = vprofile.internal`) so bare hostnames actually resolve — the zone alone wasn't sufficient without the DHCP fix (Session 16).
 - **Application credentials are rendered at deploy time from a Jinja2 template, not left as the WAR's baked-in defaults.** The WAR ships `jdbc.password=admin123` and `rabbitmq.password=test` — confirmed (via Project 1's own `PROGRESS.md`) to be the reference app's original Vagrant-era defaults, the same `admin123` Project 1's `mysql.sh` originally hardcoded before its own Secrets Manager migration. Project 1's own architecture never edited these baked-in values — it dynamically wrote a fresh `application.properties` at boot using real fetched secrets. This session replicates that same pattern via Ansible: a `templates/application.properties.j2` file (owned by the `tomcat` role) with `jdbc.password`/`rabbitmq.password` parameterized, rendered via `amazon.aws.secretsmanager_secret` lookups (`vprofile/db/app-password`, `vprofile/rmq/test-password`) and deployed to the Tomcat-exploded `webapps/vprofile/WEB-INF/classes/` path (not the `.war` archive itself, which Tomcat doesn't re-read), with `mode: '0640'` since the file now contains a live database password. A `wait_for` task polls for the exploded directory to exist first, since Tomcat only creates it a few seconds after service start.
+- **Three Ansible idempotency bugs found and fixed via a real second full-playbook run, not assumed from a single successful pass:**
+  - `mariadb`'s root-password task lacked `login_password`/`login_user`, letting MariaDB's `mysql_user` module silently switch root off `unix_socket` auth after the first run — fixed by adding both alongside the existing `login_unix_socket`, restoring `check_implicit_admin` to a genuine fallback.
+  - `mariadb`'s schema-import task (`state: import`) re-ran the schema's `DROP TABLE`/`CREATE TABLE`/`INSERT` statements unconditionally on every run — a real data-loss risk, not just wasted work. Fixed with a new read-only precondition check (`information_schema.tables` row count) gating the import behind `when:`.
+  - `rabbitmq`'s GPG-key-import task (`rpm_key` with a URL `key:`) always re-fetched the key from `github.com`, with no network path since the temporary NAT Gateway (Session 14) was torn down — timed out on this run. Confirmed the key was already genuinely present, then guarded the fetch behind a new `rpm -q gpg-pubkey | grep` precondition check.
 
 ### Security Decisions
 
@@ -122,7 +126,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 | Phase 2 | Terraform EC2 infrastructure | MariaDB, Memcached, RabbitMQ, Tomcat instances | COMPLETE |
 | Phase 3 | Terraform apply & verification | Infrastructure created, state verified | COMPLETE |
 | Phase 4 | Ansible roles | Roles for all 4 services | **COMPLETE** — all 4 verified running; Tomcat 404 and credential-mismatch both fixed and verified |
-| Phase 5 | Ansible execution & idempotency | Successful run + zero-change second run | **In progress** — scoped run verified this session; full second run across all 4 hosts still pending |
+| Phase 5 | Ansible execution & idempotency | Successful run + zero-change second run | **COMPLETE** — full 4-host second run verified `changed=0, failed=0`, three idempotency bugs found and fixed this session |
 | Phase 6 | Reproducibility & documentation | Destroy → recreate → verify, README, docs | Not started |
 
 ## Resource Reference
@@ -193,8 +197,9 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 - **Resolved:** Tomcat 404 — Tomcat 9 → 10, fixed manually and now in code (`90b1179`).
 - **Resolved:** bare backend hostnames unresolvable — Route 53 zone + DHCP option set, committed (`ef2e2b7`).
 - **Resolved:** `jdbc.password=admin123` / `rabbitmq.password=test` mismatch — fixed via templated `application.properties` with real Secrets Manager values, committed and verified (`90b1179`).
-- **Open:** browser-level proof of the VProfile login page has not yet been captured.
-- **Open:** second full playbook execution/idempotency check across all 4 hosts has not yet been run.
+- **Resolved:** second full playbook execution/idempotency check — completed this session; `changed=0, failed=0` across all 4 hosts, after fixing 3 idempotency bugs (see Key Decisions).
+
+
 - **Note (not an issue):** `terraform/ec2.tf` shows as modified under WSL's Git only — confirmed CRLF-only artifact, deliberately left uncommitted; normalize during the Repository Hygiene Checkpoint.
 
 ## Definition of Done
@@ -208,13 +213,13 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 - [x] Roles created for Tomcat, MariaDB, Memcached, RabbitMQ.
 - [x] Inventory configured.
 - [x] Playbook executes successfully across all 4 hosts.
-- [ ] Second execution is idempotent (zero changes) — **not yet tested this session.**
+- [x] Second execution is idempotent (zero changes) — verified this session across all 4 hosts.
 
 ### Verification
 
 - [x] All four services healthy — Tomcat 10 running, VProfile app returns HTTP 200, real credentials confirmed rendered.
 - [x] Application reachable from Tomcat host — `curl http://localhost:8080/vprofile/` returns `200`.
-- [ ] Browser-level application evidence — login page screenshot still needs to be captured.
+- [x] Browser-level application evidence — captured at `docs/images/vprofile-login-page.png`, verified via SSM port forwarding to `localhost:8080/vprofile/`.
 - [ ] Destroy → recreate → verify reproducibility test completed.
 
 ### Documentation
@@ -234,12 +239,8 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ## Next Step
 
-### Resume here — idempotency check, then screenshot
+### Resume here — screenshot, then commit/push
 
-1. **Run the full playbook** (`ansible-playbook -i inventory/hosts.yml playbook.yml`, no `--limit`) across all 4 hosts; confirm `changed=0` for every task on the second pass.
-2. **Capture a browser screenshot** of the VProfile login page loading successfully, for README documentation (redact nothing sensitive is shown on that page, but follow the project's usual redaction check regardless).
-3. Commit `NOTES.md`/`PROGRESS.md` (this update).
-4. `git push` — 4+ local commits are currently ahead of `origin/master` and unpushed.
-5. Once idempotency + screenshot are done, Phase 5 is complete and Phase 6 (reproducibility test, full documentation set) becomes the next real phase.
+1. **Capture a browser screenshot** of the VProfile login page loading successfully, for README documentation (redact nothing sensitive shown on that page, but follow the project's usual redaction check regardless).
 
 **Cost note:** Route 53 private hosted zone (~$0.50/month) is live. All 4 EC2 instances confirmed `running` at the start of this session.
