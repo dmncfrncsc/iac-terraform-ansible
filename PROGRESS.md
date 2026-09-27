@@ -239,8 +239,12 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ## Next Step
 
-### Resume here — screenshot, then commit/push
+### Resume here — Phase 6: Reproducibility & Documentation
 
-1. **Capture a browser screenshot** of the VProfile login page loading successfully, for README documentation (redact nothing sensitive shown on that page, but follow the project's usual redaction check regardless).
+Phase 5 is fully complete and verified (idempotent 4-host run, browser evidence captured and committed). Next work is Phase 6:
 
-**Cost note:** Route 53 private hosted zone (~$0.50/month) is live. All 4 EC2 instances confirmed `running` at the start of this session.
+1. Destroy → recreate → verify reproducibility test.
+2. `README.md`, `docs/architecture.md`, `docs/decisions.md`, `docs/incidents.md`, `docs/course-coverage.md`.
+3. Final repository hygiene checkpoint (including the known `ec2.tf` CRLF normalization).
+
+**Cost note:** Route 53 private hosted zone (~$0.50/month) is live. All 4 EC2 instances were confirmed `running` as of the last verified session — re-verify current state before Phase 6 work, since instance state has drifted between sessions before (Session 11).
