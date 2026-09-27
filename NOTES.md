@@ -713,3 +713,12 @@ to show `PingStatus: Online` before retrying Ansible.
 
 **Failing by IP, not just hostname, is the important clue** — this rules out DNS/DHCP as any part of the current problem (it worked correctly right before this failure was found), and narrows the search to something at the routing or lower-level networking layer: subnet placement, route table association, or possibly NACLs (not yet checked this session).
 
+## Session 20 — 2026-09-27 — Hardcoded DNS Records: A Second Rebuild-Sensitivity Bug
+
+**A Terraform record set as a literal string has no idea what it's "supposed" to track — it just never changes.** `records = ["172.20.3.56"]` and `records = [aws_instance.db.private_ip]` look almost identical but behave completely differently on rebuild: the first is a fixed value Terraform will never revisit; the second is a real dependency Terraform re-evaluates and updates automatically whenever the referenced instance's IP changes.
+
+*This project:* all three backend Route 53 records (`db01`, `mc01`, `rmq01`) were written as hardcoded strings from the very first apply, and silently drifted the moment the Session 19 destroy/recreate gave each instance a new private IP. `tomcat01` was resolving hostnames correctly to *stale* addresses — nothing was actually broken at the DNS-lookup mechanism level, the records themselves were just wrong.
+
+**"Failing by IP too" ruled out DNS as a *mechanism*, but not as the actual root cause — those are different claims.** Session 19 correctly used the by-IP test to rule out DNS resolution/DHCP as the failure point. But the specific IP tested (`.56`, from the rebuild table in `PROGRESS.md`) was itself stale — so the by-IP test wasn't actually testing live infrastructure, it was testing a documented value nobody had re-verified against `describe-instances`. Same class of lesson as Session 6: a "record of intended state" (here, `PROGRESS.md`'s own rebuild table) isn't proof of current state, even when the record was accurate a few messages ago.
+
+**Fix:** replaced all 3 hardcoded `records = ["<IP>"]` values with `records = [aws_instance.<name>.private_ip]` — verified via `terraform plan` (3 changed, 0 added/destroyed), `apply`, and a live TCP reachability recheck (`/dev/tcp` on 3306/11211/5672) from `tomcat01`, all three succeeding. Committed and pushed as `e6af0b3`.

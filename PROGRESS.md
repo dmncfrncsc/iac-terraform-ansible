@@ -28,7 +28,7 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 **Phase 5 — Ansible execution & idempotency: COMPLETE.** A full second run across all 4 hosts returned `changed=0, failed=0` for every host (`mariadb01` and `rabbitmq01` each with one correctly-skipped task). Getting there required finding and fixing three real idempotency bugs this session — see Key Decisions and Known Issues.
 
-**Phase 6 — Reproducibility & Documentation: IN PROGRESS, BLOCKED.** Full `terraform destroy` (35 destroyed) → `terraform apply` (35 added) cycle completed successfully from a blank state — including repeating the RabbitMQ temporary-NAT-Gateway bootstrap (confirmed necessary again, same as Session 14; NAT resources added, used, destroyed, and removed from code, `terraform plan` confirmed `No changes` afterward). DNS resolution re-verified correct post-rebuild. **Currently blocked:** backend TCP connectivity (3306/11211/5672) from `tomcat01` fails via both hostname and direct IP, despite all 3 backend services confirmed active+listening and both the relevant SG ingress rule and app-sg egress confirmed correct. Root cause not yet found — see Known Issues and Next Step.
+**Phase 6 — Reproducibility & Documentation: IN PROGRESS.** Full `terraform destroy` (35 destroyed) → `terraform apply` (35 added) cycle completed successfully from a blank state — including repeating the RabbitMQ temporary-NAT-Gateway bootstrap (confirmed necessary again, same as Session 14; NAT resources added, used, destroyed, and removed from code, `terraform plan` confirmed `No changes` afterward). The subsequent backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) is **RESOLVED** — root cause was three hardcoded Route 53 A records (`db01`/`mc01`/`rmq01`) that still pointed at the *previous* rebuild's private IPs; a fresh instance doesn't reuse its old IP, so DNS was silently stale. Fixed by referencing `aws_instance.<name>.private_ip` instead of literal strings, verified via `terraform plan` (3 changed, 0 added/destroyed), `apply`, and live TCP reachability tests from `tomcat01` (all 3 ports succeed). Commit `e6af0b3`. Remaining Phase 6 work: idempotency re-run, then documentation + final hygiene checkpoint.
 
 ## Project Baseline
 
@@ -202,7 +202,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 - **Resolved:** second full playbook execution/idempotency check — completed this session; `changed=0, failed=0` across all 4 hosts, after fixing 3 idempotency bugs (see Key Decisions).
 
 
-- **OPEN:** post-rebuild backend TCP connectivity failure (3306/11211/5672 from `tomcat01`, both by hostname and IP) — services confirmed active/listening, relevant SG ingress and egress confirmed correct, root cause not yet found. See Next Step.
+- **Resolved:** post-rebuild backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) — root cause was 3 hardcoded Route 53 A records left pointing at the prior rebuild's IPs instead of referencing the instances dynamically. Fixed via `aws_instance.<name>.private_ip` references, committed and pushed (`e6af0b3`), verified via `terraform plan`/`apply` and live TCP checks on all 3 ports.
 - **Note (not an issue):** `terraform/ec2.tf` shows as modified under WSL's Git only — confirmed CRLF-only artifact, deliberately left uncommitted; normalize during the Repository Hygiene Checkpoint.
 
 ## Definition of Done
@@ -242,24 +242,22 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 ## Next Step
 
-### Resume here — Debug backend connectivity failure (Phase 6, blocking)
+### Resume here — Phase 6 idempotency re-run
 
-Destroy/recreate cycle succeeded; this is a NEW problem found only by rebuilding, not a regression of anything previously working. Resume debugging in this order:
+Backend connectivity is fixed and verified (see Known Issues). Next:
 
-1. **Confirm `mariadb01`'s subnet/route table match `tomcat01`'s** — was mid-check when session ended. Command: `aws ec2 describe-instances --instance-ids i-0fe7a3a6b6a2f0370 --query 'Reservations[0].Instances[0].{SubnetId:SubnetId,PrivateIp:PrivateIpAddress}' --output json` — compare `SubnetId` against `tomcat01`'s (`subnet-0812a6b32b9949a73`).
-2. If subnets match, check the private route table (`aws_route_table.private`) for anything unexpected — confirm only the VPC-local route exists (no leftover/broken route from the NAT-Gateway cleanup).
-3. Check Network ACLs on the private subnet (not yet checked this session) — default NACLs allow all, but worth confirming nothing non-default was created.
-4. Cross-check `mc-sg` and `rmq-sg` ingress rules the same way `db-sg` was checked (confirmed correct) — not yet done for the other two.
-5. Once root cause is found and fixed, re-run the full TCP reachability test, then continue Phase 6: idempotency re-run (2nd full playbook pass, expect `changed=0`), then `README.md` + `docs/` files + final hygiene checkpoint.
+1. Run a full second playbook pass across all 4 hosts (`ansible-playbook -i inventory/hosts.yml playbook.yml`) — expect `changed=0, failed=0` on all 4, same bar as Session 18's pre-rebuild idempotency run.
+2. If anything reports `changed`, treat it the same way Session 18 did: read the actual task, don't assume — determine whether it's a real bug or an expected one-time reconciliation (e.g. DNS records now correctly matching, so no further changes expected there).
+3. Once idempotency is confirmed, move to `README.md` + `docs/architecture.md` + `docs/decisions.md` + `docs/incidents.md` + `docs/course-coverage.md`, then the final repository hygiene checkpoint (includes the still-deferred `ec2.tf` CRLF normalization).
 
 **New resource IDs from this rebuild (for reference during debugging — supersede the old Resource Reference table below until Phase 6 is fully done and that table is rewritten):**
 - VPC: `vpc-08bd435f56891523a`
 - Private subnet 1a: `subnet-0812a6b32b9949a73`
 - Public subnet 1a: `subnet-0c9bbb90999b99dca` / 1b: `subnet-0169a70a3bc05097e`
 - App/tomcat01: `i-07cdc61e6b1142ec5` (`172.20.3.15`)
-- DB/mariadb01: `i-0fe7a3a6b6a2f0370` (`172.20.3.56`)
-- Cache/memcached01: `i-02b3dc69a55f16042` (`172.20.3.237`)
-- MQ/rabbitmq01: `i-069441e9930abc795` (`172.20.3.106`)
+- DB/mariadb01: `i-0fe7a3a6b6a2f0370` (`172.20.3.103`)
+- Cache/memcached01: `i-02b3dc69a55f16042` (`172.20.3.186`)
+- MQ/rabbitmq01: `i-069441e9930abc795` (`172.20.3.245`)
 - app-sg: `sg-00326644e64269700`, db-sg: `sg-00e621a08a33938e5`, mc-sg: `sg-00112dec9af86fba4`, rmq-sg: `sg-076f05b512766a6c6`
 - Route 53 zone: `Z07956241HBR3FVYWP3CB`, DHCP options: `dopt-0d69face8dc93db76`
 
