@@ -13,8 +13,8 @@ This is Project 2 of 5 planned portfolio projects.
 Portfolio sequence:
 
 - ✅ Project 1 — `aws-lift-and-shift` (CLOSED)
-- Project 2 — `iac-terraform-ansible` (CURRENT)
-- Project 3 — `cicd-pipeline-vprofile`
+- ✅ Project 2 — `iac-terraform-ansible` (COMPLETE; closed to development 2026-09-29)
+- 🟢 Project 3 — `cicd-pipeline-vprofile` (CURRENT — planning)
 - Project 4 — `aws-paas-migration`
 - Project 5 — `k8s-gitops-vprofile`
 
@@ -22,14 +22,9 @@ The full roadmap and project rationale live in the master portfolio prompt. This
 
 ## Current Phase
 
-**Phase 1–3 — Terraform Foundation, EC2, Apply & Verification: COMPLETE.**
+**Project 2 — COMPLETE as a portfolio deliverable; closed to development on 2026-09-29.** The user confirmed completion and transition to Project 3. The Definition of Done below records Terraform, Ansible, verification, documentation, and final repository hygiene as complete; the closing cleanup commit is `0f24e16`.
 
-**Phase 4 — Ansible Roles: functionally complete and verified.** All 4 roles have completed successful live runs. The `tomcat` role now matches the verified live state (Tomcat 10, correct paths), and the `jdbc.password`/`rabbitmq.password` mismatch is fixed via a templated `application.properties` rendered from real Secrets Manager values at deploy time — replacing the WAR's baked-in `admin123`/`test` defaults, following the same "write real credentials at boot, don't edit compiled defaults" pattern Project 1 used.
-
-**Phase 5 — Ansible execution & idempotency: COMPLETE.** A full second run across all 4 hosts returned `changed=0, failed=0` for every host (`mariadb01` and `rabbitmq01` each with one correctly-skipped task). Getting there required finding and fixing three real idempotency bugs this session — see Key Decisions and Known Issues.
-
-**Phase 6 — Reproducibility & Documentation: IN PROGRESS.** Full `terraform destroy` (35 destroyed) → `terraform apply` (35 added) cycle completed successfully from a blank state — including repeating the RabbitMQ temporary-NAT-Gateway bootstrap (confirmed necessary again, same as Session 14; NAT resources added, used, destroyed, and removed from code, `terraform plan` confirmed `No changes` afterward). The subsequent backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) is **RESOLVED** — root cause was three hardcoded Route 53 A records (`db01`/`mc01`/`rmq01`) that still pointed at the *previous* rebuild's private IPs; a fresh instance doesn't reuse its old IP, so DNS was silently stale. Fixed by referencing `aws_instance.<name>.private_ip` instead of literal strings, verified via `terraform plan` (3 changed, 0 added/destroyed), `apply`, and live TCP reachability tests from `tomcat01` (all 3 ports succeed). Commit `e6af0b3`. A full second playbook run across all 4 hosts post-fix confirmed `changed=0, failed=0` on every host (`mariadb01`/`rabbitmq01` each with the expected 1 skip, same guarded tasks as Session 18) — idempotency holds on a genuinely rebuilt environment, not just the original. The `README.md` has now been drafted from the verified project state and adopted by the user. Remaining Phase 6 work: refresh the stale Resource Reference table from the latest rebuild values, create `docs/architecture.md`, `docs/decisions.md`, `docs/incidents.md`, and `docs/course-coverage.md`, then complete the final repository hygiene checkpoint.
-
+This completion status does **not** mean AWS resources were destroyed. The last recorded AWS inventory and cost note are from 2026-09-27 and were not reverified for this handoff. See **Closure & Handoff** for the last recorded resource state and the cross-project boundary.
 ## Project Baseline
 
 Project 2 intentionally reproduces the **verified architecture from Project 1** before introducing Infrastructure-as-Code improvements.
@@ -95,7 +90,7 @@ Architectural improvements (modules, remote state, ALB, Interface VPC Endpoints,
 - Pin Terraform provider versions and commit `.terraform.lock.hcl` when appropriate.
 - Terraform version verified via `terraform -version`: **v1.16.1**.
 - AWS provider pinned to `~> 5.31.0` in `terraform/versions.tf`.
-- `terraform/ec2.tf` periodically shows as "modified" under WSL's Git but not Git Bash's — confirmed this session (via `git diff --stat`: 80 insertions/80 deletions, identical content) to be a CRLF/LF line-ending artifact from cross-environment editing, not a real change. Left uncommitted deliberately; to be normalized during the eventual Repository Hygiene Checkpoint, not chased mid-session.
+- At this checkpoint, `terraform/ec2.tf` showed a CRLF/LF artifact between WSL and Git Bash. It was later handled during final repository hygiene with `.gitattributes` (commit `4257d05`); the cleanup checkpoint and closing commit `0f24e16` are recorded complete.
 
 ### Terraform / Ansible Boundary
 
@@ -134,9 +129,12 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 | Phase 3 | Terraform apply & verification | Infrastructure created, state verified | COMPLETE |
 | Phase 4 | Ansible roles | Roles for all 4 services | **COMPLETE** — all 4 verified running; Tomcat 404 and credential-mismatch both fixed and verified |
 | Phase 5 | Ansible execution & idempotency | Successful run + zero-change second run | **COMPLETE** — full 4-host second run verified `changed=0, failed=0`, three idempotency bugs found and fixed this session |
-| Phase 6 | Reproducibility & documentation | Destroy → recreate → verify, README, supporting docs | **IN PROGRESS** — reproducibility and README complete; supporting docs and final hygiene remain |
+| Phase 6 | Reproducibility & documentation | Destroy → recreate → verify, README, supporting docs | **COMPLETE** — reproducibility, documentation, and repository hygiene recorded complete |
 
 ## Resource Reference
+
+**Inventory freshness:** resource IDs and addresses below reflect the last recorded AWS verification on 2026-09-27. They were not reverified for this handoff; verify before relying on them.
+
 
 ### Networking
 
@@ -209,7 +207,7 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 
 
 - **Resolved:** post-rebuild backend TCP connectivity failure (3306/11211/5672 from `tomcat01`) — root cause was 3 hardcoded Route 53 A records left pointing at the prior rebuild's IPs instead of referencing the instances dynamically. Fixed via `aws_instance.<name>.private_ip` references, committed and pushed (`e6af0b3`), verified via `terraform plan`/`apply` and live TCP checks on all 3 ports.
-- **Note (not an issue):** `terraform/ec2.tf` shows as modified under WSL's Git only — confirmed CRLF-only artifact, deliberately left uncommitted; normalize during the Repository Hygiene Checkpoint.
+- **Resolved during final hygiene:** the cross-environment line-ending artifact was handled through repository attributes/cleanup (`.gitattributes`, commit `4257d05`); the final hygiene checkpoint and closing commit `0f24e16` are recorded complete.
 
 ## Definition of Done
 
@@ -246,16 +244,10 @@ Connection method: **SSM**, via the `community.aws`/`amazon.aws` `aws_ssm` Ansib
 - [x] No secrets committed.
 - [x] Final repository hygiene/cleanup checkpoint completed — .gitattributes added (4257d05), .gitignore completeness fold-in, closing commit (0f24e16).
 
-## Next Step
+## Closure & Handoff
 
-### Resume here — Final repository hygiene checkpoint
+Project 2 is complete and closed to further development as of 2026-09-29. The stored Definition of Done and closing cleanup commit `0f24e16` record the project deliverable as complete.
 
-All Phase 6 documentation is committed and pushed (`c1d7822`): `README.md`, `docs/architecture.md`, `docs/decisions.md`, `docs/incidents.md`, `docs/course-coverage.md`. The Resource Reference table above reflects current post-rebuild AWS state, verified this session via `describe-route-tables`, `describe-vpc-endpoints`, and `describe-security-groups`.
+**Last recorded AWS state (not reverified for this handoff):** the 2026-09-27 note reported all four EC2 instances running, a live Route 53 private hosted zone (approximately $0.50/month at that time), and no NAT Gateway or Elastic IP. The resource IDs above are a historical snapshot, not proof of current state. Verify current AWS state before taking cost-related action or reusing anything.
 
-Only the repository hygiene checkpoint remains before Project 2 can be closed:
-
-1. Normalize `terraform/ec2.tf`'s CRLF/LF line-ending diff (deferred since Session 17 — confirmed harmless, WSL-only artifact).
-2. Run the general cleanup checklist: accidental files, duplicate artifacts, `.gitignore` correctness, clean `git status`.
-3. One final `chore:` commit closing out the project.
-
-**Cost note:** All 4 instances `running`, Route 53 zone live (~$0.50/month). No NAT Gateway/EIP present. Re-verify instance state at next session start regardless — it has drifted before.
+**Cross-project boundary:** Project 3 does not inherit Project 2 Terraform state, AWS resources, buckets, secrets, or artifacts by default. Any sharing must be decided, documented, and verified separately in Project 3.
